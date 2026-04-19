@@ -85,18 +85,25 @@ export default function AcceptInvite({ onComplete }) {
 
     setStep1Loading(true);
     try {
-      const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Request timed out. Check your connection and try again.')), 15000)
-      );
-      const update = supabase.auth.updateUser({ password });
-      const { error } = await Promise.race([update, timeout]);
-      if (error) {
-        setStep1Error(error.message || 'Failed to set password. Please try again.');
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setStep1Error('Session expired. Please click the invite link from your email again.');
+        setStep1Loading(false);
+        return;
+      }
+      const res = await fetch('/api/auth/set-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStep1Error(data.error || 'Failed to set password. Please try again.');
       } else {
         setStep(2);
       }
     } catch (err) {
-      setStep1Error(err.message || 'An unexpected error occurred. Please try again.');
+      setStep1Error('Network error. Please check your connection and try again.');
     } finally {
       setStep1Loading(false);
     }

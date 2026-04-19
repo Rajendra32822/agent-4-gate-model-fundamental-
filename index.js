@@ -248,6 +248,23 @@ app.delete('/api/watchlist/:ticker', requireAuth, async (req, res) => {
   res.json({ success: true });
 });
 
+// ─── Set password via service role (more reliable than client-side updateUser) ─
+app.post('/api/auth/set-password', async (req, res) => {
+  const { password } = req.body;
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'No token provided' });
+  if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  try {
+    const { data: { user }, error: userErr } = await supabaseAdmin.auth.getUser(token);
+    if (userErr || !user) return res.status(401).json({ error: 'Invalid session. Please use a fresh invite link.' });
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(user.id, { password });
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Admin: invite user ───────────────────────────────────────────────────────
 app.post('/api/admin/invite', requireAdmin, async (req, res) => {
   const { email, name } = req.body;
