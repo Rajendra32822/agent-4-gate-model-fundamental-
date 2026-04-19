@@ -112,13 +112,13 @@ export default function Profile({ onSelectStock }) {
         preferred_sectors: editSectors,
       });
       if (error) {
-        setSaveError(error.message || 'Failed to save changes.');
+        setSaveError(error.message || 'Failed to save. Please try again.');
       } else {
         setSaveSuccess('Profile updated successfully!');
         setTimeout(() => setSaveSuccess(''), 3000);
       }
     } catch (err) {
-      setSaveError('An unexpected error occurred.');
+      setSaveError(err.message || 'An unexpected error occurred.');
     } finally {
       setSaveLoading(false);
     }
