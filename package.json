@@ -1,0 +1,22 @@
+{
+  "name": "fundamental-agent",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": "18.19.0"
+  },
+  "scripts": {
+    "build": "cd client && npm install && npm run build",
+    "start": "npm install && node index.js",
+    "install:all": "npm install && cd client && npm install"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.3.1",
+    "@supabase/supabase-js": "^2.45.0",
+    "node-cache": "^5.1.2"
+  }
+}
