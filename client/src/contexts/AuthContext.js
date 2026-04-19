@@ -42,17 +42,19 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    // Get initial session
+    // Get initial session with hard timeout so app never hangs
     const initSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise(resolve =>
+          setTimeout(() => resolve({ data: { session: null } }), 8000)
+        );
+        const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
         const currentUser = session?.user ?? null;
         setUser(currentUser);
-        if (currentUser) {
-          await fetchProfile(currentUser.id);
-        }
+        if (currentUser) await fetchProfile(currentUser.id);
       } catch (err) {
-        console.error('Error initializing session:', err);
+        console.error('Auth init error:', err);
       } finally {
         setLoading(false);
       }
@@ -85,7 +87,6 @@ export function AuthProvider({ children }) {
   }, [fetchProfile]);
 
   const signIn = async (email, password) => {
-    setLoading(true);
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -103,13 +104,10 @@ export function AuthProvider({ children }) {
       return { data, error: null };
     } catch (err) {
       return { data: null, error: err };
-    } finally {
-      setLoading(false);
     }
   };
 
   const signOut = async () => {
-    setLoading(true);
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
@@ -118,8 +116,6 @@ export function AuthProvider({ children }) {
       return { error: null };
     } catch (err) {
       return { error: err };
-    } finally {
-      setLoading(false);
     }
   };
 
