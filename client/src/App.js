@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import supabase from './lib/supabase';
+import { getAccessToken } from './lib/tokenStore';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import AcceptInvite from './pages/AcceptInvite';
@@ -78,10 +78,12 @@ function AppRouter() {
       }
 
       setServerStatus('');
-      const { data: { session } } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      const token = getAccessToken();
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 30000);
       const res = await fetch('/api/analyses', {
-        signal: AbortSignal.timeout(30000),
-        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+        signal: controller.signal,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
       if (!res.ok) {

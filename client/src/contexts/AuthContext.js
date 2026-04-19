@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import supabase from '../lib/supabase';
 import authFetch from '../lib/api';
+import { setAccessToken } from '../lib/tokenStore';
 
 const ADMIN_EMAIL = 'rajendra.amil@gmail.com';
 
@@ -14,27 +15,14 @@ export function AuthProvider({ children }) {
   const isAdmin = user?.email === ADMIN_EMAIL;
 
   const fetchProfile = useCallback(async (userId) => {
-    if (!userId) {
-      setProfile(null);
-      return;
-    }
+    if (!userId) { setProfile(null); return; }
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (error) {
-        if (error.code === 'PGRST116') {
-          // Row not found — profile doesn't exist yet
-          setProfile(null);
-        } else {
-          console.error('Error fetching profile:', error);
-          setProfile(null);
-        }
+      const res = await authFetch(`/api/profile`);
+      if (res.ok) {
+        const data = await res.json();
+        setProfile(data && data.id ? data : null);
       } else {
-        setProfile(data);
+        setProfile(null);
       }
     } catch (err) {
       console.error('Unexpected error fetching profile:', err);
@@ -43,7 +31,6 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    // Get initial session with hard timeout so app never hangs
     const initSession = async () => {
       try {
         const sessionPromise = supabase.auth.getSession();
@@ -51,6 +38,7 @@ export function AuthProvider({ children }) {
           setTimeout(() => resolve({ data: { session: null } }), 8000)
         );
         const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
+        setAccessToken(session?.access_token ?? null);
         const currentUser = session?.user ?? null;
         setUser(currentUser);
         if (currentUser) await fetchProfile(currentUser.id);
@@ -63,16 +51,14 @@ export function AuthProvider({ children }) {
 
     initSession();
 
-    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        setAccessToken(session?.access_token ?? null);
         const currentUser = session?.user ?? null;
         setUser(currentUser);
 
         if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
-          if (currentUser) {
-            await fetchProfile(currentUser.id);
-          }
+          if (currentUser) await fetchProfile(currentUser.id);
         } else if (event === 'SIGNED_OUT') {
           setUser(null);
           setProfile(null);
@@ -82,26 +68,17 @@ export function AuthProvider({ children }) {
       }
     );
 
-    return () => {
-      subscription?.unsubscribe();
-    };
+    return () => subscription?.unsubscribe();
   }, [fetchProfile]);
 
   const signIn = async (email, password) => {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-
+      setAccessToken(data?.session?.access_token ?? null);
       const signedInUser = data?.user ?? null;
       setUser(signedInUser);
-      if (signedInUser) {
-        await fetchProfile(signedInUser.id);
-      }
-
+      if (signedInUser) await fetchProfile(signedInUser.id);
       return { data, error: null };
     } catch (err) {
       return { data: null, error: err };
@@ -112,6 +89,7 @@ export function AuthProvider({ children }) {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
+      setAccessToken(null);
       setUser(null);
       setProfile(null);
       return { error: null };
@@ -122,7 +100,6 @@ export function AuthProvider({ children }) {
 
   const updateProfile = async (updates) => {
     if (!user) return { error: new Error('Not authenticated') };
-
     try {
       const res = await authFetch('/api/profile', {
         method: 'PUT',
@@ -138,16 +115,7 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const value = {
-    user,
-    profile,
-    isAdmin,
-    loading,
-    signIn,
-    signOut,
-    updateProfile,
-    fetchProfile,
-  };
+  const value = { user, profile, isAdmin, loading, signIn, signOut, updateProfile, fetchProfile };
 
   return (
     <AuthContext.Provider value={value}>
@@ -158,9 +126,7 @@ export function AuthProvider({ children }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 }
 
