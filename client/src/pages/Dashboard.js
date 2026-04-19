@@ -74,7 +74,7 @@ function StockCard({ analysis, onClick, onUpdate }) {
   );
 }
 
-export default function Dashboard({ analyses, loading, onSelect, onNewAnalysis, onUpdate }) {
+export default function Dashboard({ analyses, loading, serverStatus, loadError, onRetry, onSelect, onNewAnalysis, onUpdate }) {
   const buyList  = analyses.filter(a => a.overallVerdict === 'BUY');
   const watchList = analyses.filter(a => a.overallVerdict === 'WATCH');
   const avoidList = analyses.filter(a => a.overallVerdict === 'AVOID');
@@ -97,13 +97,28 @@ export default function Dashboard({ analyses, loading, onSelect, onNewAnalysis, 
         <div>
           <div style={{ color: '#5e5c58', fontSize: 13, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ animation: 'spin 1.2s linear infinite', display: 'inline-block' }}>◌</span>
-            Loading analyses… (server may be waking up, takes ~30s on first load)
+            {serverStatus || 'Loading analyses…'}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
             {[1,2,3,4,5].map(i => (
               <div key={i} className="skeleton" style={{ height: 180 }} />
             ))}
           </div>
+        </div>
+      ) : loadError ? (
+        <div style={{ textAlign: 'center', padding: '60px 20px' }}>
+          <div style={{ fontSize: 36, marginBottom: 16 }}>⚡</div>
+          <div style={{ color: '#f87171', fontSize: 15, marginBottom: 8 }}>{loadError}</div>
+          <div style={{ color: '#5e5c58', fontSize: 13, marginBottom: 24 }}>
+            The server on Render's free tier sleeps after inactivity.<br />
+            It takes up to 60 seconds to wake up on first visit.
+          </div>
+          <button
+            onClick={onRetry}
+            style={{ background: '#c9a84c', color: '#0d0f11', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}
+          >
+            ↻ Retry Now
+          </button>
         </div>
       ) : (
         <>

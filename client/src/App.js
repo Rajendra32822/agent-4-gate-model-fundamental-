@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import supabase from './lib/supabase';
 import Landing from './pages/Landing';
@@ -11,14 +11,33 @@ import Profile from './pages/Profile';
 import AdminPanel from './pages/AdminPanel';
 import './styles/global.css';
 
+// Poll /api/health until server responds, with progress callbacks
+async function waitForServer(onStatus, signal) {
+  const MAX_ATTEMPTS = 24; // 24 × 5s = 120s max
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    if (signal?.aborted) return false;
+    try {
+      const res = await fetch('/api/health', { signal: AbortSignal.timeout(4000) });
+      if (res.ok) return true;
+    } catch {}
+    const remaining = MAX_ATTEMPTS - i - 1;
+    onStatus(`Server waking up… (~${remaining * 5}s remaining)`);
+    await new Promise(r => setTimeout(r, 5000));
+  }
+  return false;
+}
+
 function AppRouter() {
   const { user, profile, isAdmin, loading, signOut } = useAuth();
   const [page, setPage] = useState('dashboard');
   const [selectedTicker, setSelectedTicker] = useState(null);
   const [analyses, setAnalyses] = useState([]);
   const [analysesLoading, setAnalysesLoading] = useState(true);
+  const [serverStatus, setServerStatus] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [isInviteFlow, setIsInviteFlow] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const abortRef = useRef(null);
 
   useEffect(() => {
     const hash = window.location.hash;
@@ -27,25 +46,69 @@ function AppRouter() {
     }
   }, []);
 
+  const fetchAnalyses = useCallback(async () => {
+    setAnalysesLoading(true);
+    setLoadError('');
+    setServerStatus('');
+
+    // Cancel any previous wake-up polling
+    if (abortRef.current) abortRef.current.abort();
+    const abort = new AbortController();
+    abortRef.current = abort;
+
+    try {
+      // First check if server is alive; if not, wait for it
+      let serverReady = false;
+      try {
+        const probe = await fetch('/api/health', { signal: AbortSignal.timeout(4000) });
+        serverReady = probe.ok;
+      } catch {}
+
+      if (!serverReady) {
+        setServerStatus('Server waking up…');
+        serverReady = await waitForServer(setServerStatus, abort.signal);
+      }
+
+      if (abort.signal.aborted) return;
+
+      if (!serverReady) {
+        setLoadError('Server did not respond. Please try again.');
+        setAnalysesLoading(false);
+        return;
+      }
+
+      setServerStatus('');
+      const { data: { session } } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      const res = await fetch('/api/analyses', {
+        signal: AbortSignal.timeout(30000),
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server returned ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (!abort.signal.aborted) {
+        setAnalyses(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      if (!abort.signal.aborted) {
+        console.error('Failed to fetch analyses:', err);
+        setLoadError('Could not load analyses. Click Retry to try again.');
+      }
+    } finally {
+      if (!abort.signal.aborted) {
+        setAnalysesLoading(false);
+        setServerStatus('');
+      }
+    }
+  }, []);
+
   useEffect(() => {
     if (user) fetchAnalyses();
-  }, [user]);
-
-  const fetchAnalyses = async () => {
-    setAnalysesLoading(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch('/api/analyses', {
-        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
-      });
-      const data = await res.json();
-      setAnalyses(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to fetch analyses:', err);
-    } finally {
-      setAnalysesLoading(false);
-    }
-  };
+    return () => abortRef.current?.abort();
+  }, [user, fetchAnalyses]);
 
   const navigateTo = (p, ticker = null) => {
     setPage(p);
@@ -82,6 +145,9 @@ function AppRouter() {
           <Dashboard
             analyses={analyses}
             loading={analysesLoading}
+            serverStatus={serverStatus}
+            loadError={loadError}
+            onRetry={fetchAnalyses}
             onSelect={(ticker) => navigateTo('analysis', ticker)}
             onNewAnalysis={() => isAdmin && navigateTo('new')}
             onUpdate={onUpdate}
@@ -156,9 +222,6 @@ function Header({ page, onNavigate, isAdmin, profile, onSignOut }) {
 }
 
 export default function App() {
-  // Fire-and-forget: wake the Render server as early as possible
-  React.useEffect(() => { fetch('/api/health').catch(() => {}); }, []);
-
   return (
     <AuthProvider>
       <AppRouter />
