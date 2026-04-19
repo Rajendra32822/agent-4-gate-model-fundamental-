@@ -221,13 +221,22 @@ app.delete('/api/analysis/:ticker', requireAdmin, async (req, res) => {
 
 // ─── Profile endpoints ────────────────────────────────────────────────────────
 app.get('/api/profile', requireAuth, async (req, res) => {
-  const profile = await getProfile(req.user.id);
-  res.json(profile || {});
+  try {
+    const profile = await getProfile(req.user.id);
+    res.json(profile || {});
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/profile', requireAuth, async (req, res) => {
-  const result = await updateProfile(req.user.id, req.body);
-  res.json(result);
+  try {
+    const result = await updateProfile(req.user.id, { email: req.user.email, ...req.body });
+    if (!result) return res.status(500).json({ error: 'Failed to save profile' });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── Watchlist endpoints ──────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import supabase from '../lib/supabase';
+import authFetch from '../lib/api';
 
 const ADMIN_EMAIL = 'rajendra.amil@gmail.com';
 
@@ -123,21 +124,12 @@ export function AuthProvider({ children }) {
     if (!user) return { error: new Error('Not authenticated') };
 
     try {
-      const payload = {
-        id: user.id,
-        email: user.email,
-        updated_at: new Date().toISOString(),
-        ...updates,
-      };
-
-      const { data, error } = await supabase
-        .from('profiles')
-        .upsert(payload, { onConflict: 'id' })
-        .select()
-        .single();
-
-      if (error) throw error;
-
+      const res = await authFetch('/api/profile', {
+        method: 'PUT',
+        body: JSON.stringify(updates),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Server error ${res.status}`);
       setProfile(data);
       return { data, error: null };
     } catch (err) {
