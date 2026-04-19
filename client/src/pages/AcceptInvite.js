@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import supabase from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -16,6 +16,37 @@ const SECTORS = [
 
 export default function AcceptInvite({ onComplete }) {
   const { updateProfile } = useAuth();
+  const [sessionReady, setSessionReady] = useState(false);
+  const [sessionError, setSessionError] = useState('');
+
+  // Wait for Supabase to process the invite token from the URL hash
+  useEffect(() => {
+    let resolved = false;
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session && !resolved) {
+        resolved = true;
+        setSessionReady(true);
+      }
+    });
+
+    // Also check immediately in case session is already established
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session && !resolved) {
+        resolved = true;
+        setSessionReady(true);
+      }
+    });
+
+    // Timeout after 20s
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        setSessionError('Invite link expired or invalid. Please ask admin to send a new invite.');
+      }
+    }, 20000);
+
+    return () => { subscription.unsubscribe(); clearTimeout(timer); };
+  }, []);
 
   // Step 1 state
   const [step, setStep] = useState(1);
@@ -110,6 +141,34 @@ export default function AcceptInvite({ onComplete }) {
       setStep2Loading(false);
     }
   };
+
+  if (sessionError) return (
+    <div style={styles.page}>
+      <div style={styles.card}>
+        <div style={styles.logoArea}>
+          <div style={styles.logoIcon}>◈</div>
+          <div style={styles.logoText}>ValueSight</div>
+        </div>
+        <div style={{ ...styles.errorBox, marginTop: 16 }}>⚠ {sessionError}</div>
+        <p style={{ ...styles.subheading, marginTop: 16 }}>Contact <strong>rajendra.amil@gmail.com</strong> to request a new invite link.</p>
+      </div>
+    </div>
+  );
+
+  if (!sessionReady) return (
+    <div style={styles.page}>
+      <div style={styles.card}>
+        <div style={styles.logoArea}>
+          <div style={styles.logoIcon}>◈</div>
+          <div style={styles.logoText}>ValueSight</div>
+        </div>
+        <div style={{ textAlign: 'center', padding: '24px 0' }}>
+          <div style={{ ...styles.spinner, margin: '0 auto 16px', width: 28, height: 28 }} />
+          <p style={styles.subheading}>Verifying your invite link...</p>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div style={styles.page}>
