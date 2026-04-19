@@ -156,6 +156,9 @@ function Header({ page, onNavigate, isAdmin, profile, onSignOut }) {
 }
 
 export default function App() {
+  // Fire-and-forget: wake the Render server as early as possible
+  React.useEffect(() => { fetch('/api/health').catch(() => {}); }, []);
+
   return (
     <AuthProvider>
       <AppRouter />

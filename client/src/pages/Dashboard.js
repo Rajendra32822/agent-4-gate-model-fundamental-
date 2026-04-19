@@ -94,10 +94,16 @@ export default function Dashboard({ analyses, loading, onSelect, onNewAnalysis, 
       </div>
 
       {loading ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
-          {[1,2,3,4,5].map(i => (
-            <div key={i} className="skeleton" style={{ height: 180 }} />
-          ))}
+        <div>
+          <div style={{ color: '#5e5c58', fontSize: 13, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ animation: 'spin 1.2s linear infinite', display: 'inline-block' }}>◌</span>
+            Loading analyses… (server may be waking up, takes ~30s on first load)
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
+            {[1,2,3,4,5].map(i => (
+              <div key={i} className="skeleton" style={{ height: 180 }} />
+            ))}
+          </div>
         </div>
       ) : (
         <>
