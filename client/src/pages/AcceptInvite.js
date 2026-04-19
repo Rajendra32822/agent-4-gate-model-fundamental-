@@ -54,14 +54,18 @@ export default function AcceptInvite({ onComplete }) {
 
     setStep1Loading(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password });
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Request timed out. Check your connection and try again.')), 15000)
+      );
+      const update = supabase.auth.updateUser({ password });
+      const { error } = await Promise.race([update, timeout]);
       if (error) {
         setStep1Error(error.message || 'Failed to set password. Please try again.');
       } else {
         setStep(2);
       }
     } catch (err) {
-      setStep1Error('An unexpected error occurred. Please try again.');
+      setStep1Error(err.message || 'An unexpected error occurred. Please try again.');
     } finally {
       setStep1Loading(false);
     }
