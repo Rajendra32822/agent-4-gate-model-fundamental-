@@ -42,7 +42,7 @@
   --font-mono:  'DM Mono', 'Courier New', monospace;
 }
 
-html { font-size: 17px; }
+html { font-size: 18px; }
 
 body {
   font-family: var(--font-sans);
@@ -108,10 +108,10 @@ body {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-2);
-  padding: 6px 16px;
+  padding: 8px 18px;
   border-radius: var(--radius);
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
@@ -127,13 +127,13 @@ body {
 }
 .page-title {
   font-family: var(--font-serif);
-  font-size: 32px;
+  font-size: 36px;
   font-weight: 700;
   color: var(--text);
   letter-spacing: -0.03em;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
-.page-subtitle { font-size: 15px; color: var(--text-2); line-height: 1.6; }
+.page-subtitle { font-size: 17px; color: var(--text-2); line-height: 1.7; }
 
 /* ── Cards ─────────────────────────────────────────────── */
 .card {
@@ -362,10 +362,18 @@ body {
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-/* ── Scrollbar ─────────────────────────────────────────── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 3px; }
+/* ── Scrollbar — wide, always visible, easy to grab ───── */
+::-webkit-scrollbar { width: 14px; height: 14px; }
+::-webkit-scrollbar-track { background: var(--surface2); border-radius: 8px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.55);
+  border-radius: 8px;
+  border: 3px solid var(--surface2);
+  min-height: 48px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.85); }
+/* Firefox */
+* { scrollbar-width: auto; scrollbar-color: rgba(255,255,255,0.55) var(--surface2); }
 
 /* ── Utilities ─────────────────────────────────────────── */
 .flex { display: flex; }
@@ -384,8 +392,8 @@ body {
 .mb-8 { margin-bottom: 8px; }
 .mb-12 { margin-bottom: 12px; }
 .mb-16 { margin-bottom: 16px; }
-.text-sm { font-size: 14px; }
-.text-xs { font-size: 12px; }
+.text-sm { font-size: 15px; }
+.text-xs { font-size: 13px; }
 .text-muted { color: var(--text-2); }
 .text-dim { color: var(--text-3); }
 .font-mono { font-family: var(--font-mono); }

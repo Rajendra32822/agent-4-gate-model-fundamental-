@@ -121,10 +121,10 @@ export default function WatchesPage({ onSelectStock, isAdmin }) {
           { id: 'alerts', label: `Alerts${unread > 0 ? ` · ${unread} new` : ''}` },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
-            background: 'none', border: 'none', padding: '10px 20px', cursor: 'pointer',
-            fontSize: 14, fontWeight: tab === t.id ? 700 : 400,
-            color: tab === t.id ? 'var(--text)' : 'var(--text-muted)',
-            borderBottom: tab === t.id ? '2px solid var(--accent)' : '2px solid transparent',
+            background: 'none', border: 'none', padding: '12px 24px', cursor: 'pointer',
+            fontSize: 16, fontWeight: tab === t.id ? 700 : 400,
+            color: tab === t.id ? 'var(--text)' : 'var(--text-2)',
+            borderBottom: tab === t.id ? '3px solid var(--accent)' : '3px solid transparent',
             marginBottom: -1, fontFamily: 'inherit',
           }}>{t.label}</button>
         ))}
@@ -153,8 +153,8 @@ export default function WatchesPage({ onSelectStock, isAdmin }) {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
                     <div>
                       <button onClick={() => onSelectStock?.(w.ticker)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}>
-                        <span style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>{w.ticker}</span>
-                        <span style={{ fontSize: 13, color: 'var(--text-muted)', marginLeft: 8 }}>{w.company}</span>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>{w.ticker}</div>
+                        <div style={{ fontSize: 15, color: 'var(--text-2)', marginTop: 2, whiteSpace: 'normal', lineHeight: 1.4 }}>{w.company}</div>
                       </button>
                     </div>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -182,15 +182,15 @@ export default function WatchesPage({ onSelectStock, isAdmin }) {
                   </div>
 
                   {w.open_trade && (
-                    <div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(37,99,235,0.1)', border: '1px solid rgba(37,99,235,0.2)', borderRadius: 8, fontSize: 12, color: '#60a5fa', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                    <div style={{ marginTop: 10, padding: '10px 14px', background: 'rgba(37,99,235,0.1)', border: '1px solid rgba(37,99,235,0.2)', borderRadius: 8, fontSize: 14, color: '#60a5fa', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
                       <span>📈 Virtual trade open · Bought at {fmt(w.open_trade.buy_price)}</span>
-                      <span style={{ color: (w.open_trade.pnl_pct || 0) >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>
+                      <span style={{ color: (w.open_trade.pnl_pct || 0) >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700, fontSize: 15 }}>
                         P&L: {fmtPct(w.open_trade.pnl_pct)}
                       </span>
                     </div>
                   )}
 
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+                  <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 10 }}>
                     Analysed {fmtDate(w.analysis_date)} · Price updated {fmtDate(w.price_updated_at)}
                   </div>
                 </div>
@@ -255,15 +255,15 @@ export default function WatchesPage({ onSelectStock, isAdmin }) {
                 }}>
                   <span style={{ fontSize: 22, lineHeight: 1 }}>{ALERT_ICONS[a.alert_type] || '🔔'}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: ALERT_COLORS[a.alert_type] || '#94a3b8', letterSpacing: '0.5px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: ALERT_COLORS[a.alert_type] || '#94a3b8', letterSpacing: '0.5px' }}>
                         {a.alert_type?.replace('_', ' ')}
                       </span>
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{fmtDate(a.created_at)}</span>
+                      <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{fmtDate(a.created_at)}</span>
                     </div>
-                    <div style={{ fontSize: 13.5, color: 'var(--text)', lineHeight: 1.5 }}>{a.message}</div>
+                    <div style={{ fontSize: 15, color: 'var(--text)', lineHeight: 1.6 }}>{a.message}</div>
                     {a.triggered_price && (
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Triggered at {fmt(a.triggered_price)}</div>
+                      <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 6 }}>Triggered at {fmt(a.triggered_price)}</div>
                     )}
                   </div>
                   {!a.is_read && <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#c9a84c', flexShrink: 0, marginTop: 4 }} />}
@@ -279,18 +279,18 @@ export default function WatchesPage({ onSelectStock, isAdmin }) {
 
 function Metric({ label, value, color, highlight }) {
   return (
-    <div style={{ background: highlight ? 'rgba(34,197,94,0.08)' : 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '8px 10px', border: highlight ? '1px solid rgba(34,197,94,0.25)' : '1px solid transparent' }}>
-      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 3 }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: highlight ? '#22c55e' : (color || 'var(--text)'), fontFamily: 'var(--font-mono)' }}>{value}</div>
+    <div style={{ background: highlight ? 'rgba(34,197,94,0.08)' : 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '10px 14px', border: highlight ? '1px solid rgba(34,197,94,0.25)' : '1px solid transparent' }}>
+      <div style={{ fontSize: 11, color: 'var(--text-2)', fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 5 }}>{label}</div>
+      <div style={{ fontSize: 17, fontWeight: 700, color: highlight ? '#22c55e' : (color || 'var(--text)'), fontFamily: 'var(--font-mono)' }}>{value}</div>
     </div>
   );
 }
 
 function StatCard({ label, value, color }) {
   return (
-    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px' }}>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: color || 'var(--text)' }}>{value}</div>
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '18px 20px' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 26, fontWeight: 700, color: color || 'var(--text)' }}>{value}</div>
     </div>
   );
 }
@@ -298,7 +298,7 @@ function StatCard({ label, value, color }) {
 function Section({ title, children }) {
   return (
     <div style={{ marginBottom: 28 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 12 }}>{title}</div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-2)', letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 14 }}>{title}</div>
       {children}
     </div>
   );
