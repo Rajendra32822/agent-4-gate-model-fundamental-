@@ -424,6 +424,29 @@ app.post('/api/cron/price-check', async (req, res) => {
   }
 });
 
+// ─── Admin: backfill watches from all saved analyses (run once) ──────────────
+app.post('/api/admin/backfill-watches', requireAdmin, async (req, res) => {
+  try {
+    const analyses = await getAllAnalyses();
+    const results = { created: 0, skipped: 0, errors: [] };
+    for (const row of analyses) {
+      try {
+        const full = await getAnalysis(row.ticker);
+        if (!full) { results.skipped++; continue; }
+        const watch = extractWatchFromAnalysis(full);
+        if (!watch.ticker) { results.skipped++; continue; }
+        await upsertWatch(watch);
+        results.created++;
+      } catch (e) {
+        results.errors.push({ ticker: row.ticker, error: e.message });
+      }
+    }
+    res.json({ success: true, ...results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Load demo analyses on startup ───────────────────────────────────────────
 const DEMO_ANALYSES = require('./demoAnalyses');
 async function loadDemoAnalyses() {
