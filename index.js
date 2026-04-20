@@ -472,6 +472,27 @@ app.post('/api/admin/backfill-watches', requireAdmin, async (req, res) => {
   }
 });
 
+// ─── Admin: backfill fundamental_metrics from all saved analyses ──────────────
+app.post('/api/admin/backfill-metrics', requireAdmin, async (req, res) => {
+  try {
+    const analyses = await getAllAnalyses();
+    const results = { saved: 0, skipped: 0, errors: [] };
+    for (const row of analyses) {
+      try {
+        const full = await getAnalysis(row.ticker);
+        if (!full) { results.skipped++; continue; }
+        await saveFundamentalMetrics(full);
+        results.saved++;
+      } catch (e) {
+        results.errors.push({ ticker: row.ticker, error: e.message });
+      }
+    }
+    res.json({ success: true, ...results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Load demo analyses on startup ───────────────────────────────────────────
 const DEMO_ANALYSES = require('./demoAnalyses');
 async function loadDemoAnalyses() {

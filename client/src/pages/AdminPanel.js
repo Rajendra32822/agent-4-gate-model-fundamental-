@@ -72,6 +72,23 @@ export default function AdminPanel() {
     }
   };
 
+  // Backfill fundamental metrics
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsResult, setMetricsResult] = useState(null);
+
+  const handleBackfillMetrics = async () => {
+    setMetricsLoading(true); setMetricsResult(null);
+    try {
+      const res = await authFetch('/api/admin/backfill-metrics', { method: 'POST' });
+      const data = await res.json();
+      setMetricsResult(res.ok ? `✓ Done — ${data.saved} companies saved, ${data.skipped} skipped.` : `⚠ ${data.error}`);
+    } catch (e) {
+      setMetricsResult('⚠ ' + e.message);
+    } finally {
+      setMetricsLoading(false);
+    }
+  };
+
   // Invite section
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
@@ -209,6 +226,27 @@ export default function AdminPanel() {
             {backfillLoading ? 'Creating watches…' : '↻ Backfill All Watches'}
           </button>
           {backfillResult && <div style={{ marginTop: 12, fontSize: 13, color: backfillResult.startsWith('✓') ? '#22c55e' : '#f87171' }}>{backfillResult}</div>}
+        </div>
+
+        {/* Backfill Fundamental Metrics */}
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <div style={styles.cardIcon}>📊</div>
+            <div>
+              <h2 style={styles.cardTitle}>Backfill Fundamental Metrics</h2>
+              <p style={styles.cardSubtitle}>
+                Run once to extract and save key metrics (ROCE, debt/equity, P/B, entry zone, etc.) from all existing analyses into the fundamental_metrics table. New analyses populate this automatically going forward.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleBackfillMetrics}
+            disabled={metricsLoading}
+            style={{ background: '#2ecc7a', color: '#0d0f11', border: 'none', borderRadius: 8, padding: '10px 22px', fontSize: 14, fontWeight: 700, cursor: metricsLoading ? 'not-allowed' : 'pointer', opacity: metricsLoading ? 0.7 : 1, fontFamily: 'inherit' }}
+          >
+            {metricsLoading ? 'Saving metrics…' : '↻ Backfill All Metrics'}
+          </button>
+          {metricsResult && <div style={{ marginTop: 12, fontSize: 13, color: metricsResult.startsWith('✓') ? '#22c55e' : '#f87171' }}>{metricsResult}</div>}
         </div>
 
         {/* Invite Section */}
