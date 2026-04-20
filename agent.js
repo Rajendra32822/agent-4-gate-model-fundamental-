@@ -11,7 +11,9 @@ async function fetchCompanyData(ticker, companyName) {
   const searchQueries = [
     `site:screener.in ${ticker} consolidated profit loss balance sheet ROCE ROE revenue`,
     `${companyName} ${ticker} NSE promoter holding pledge shareholding FY2025 debt equity`,
-    `${companyName} ${ticker} business model moat competitive advantage latest quarterly results`
+    `${companyName} ${ticker} business model moat competitive advantage latest quarterly results`,
+    // CRITICAL: always fetch live price + corporate actions so split-adjusted prices are used
+    `${companyName} ${ticker} NSE current share price today 2025 2026 stock split bonus issue rights issue ex-date`
   ];
 
   const dataGathered = [];
@@ -77,13 +79,22 @@ ${dataContext}
 
 Today's date: ${new Date().toISOString().split('T')[0]}
 
+CRITICAL — CORPORATE ACTIONS CHECK (do this FIRST before any price calculation):
+1. Search the data above for any stock split, bonus issue, or rights issue in the last 3 years.
+2. Identify the ratio (e.g., 1:5 split means ₹6,200 pre-split = ₹1,240 post-split) and the ex-date.
+3. ALL price figures — including entry zone, bear/base/bull case, and currentPrice — MUST reflect the post-split / post-bonus adjusted price.
+4. Historical per-share metrics (EPS, book value per share) sourced from databases may still show pre-split numbers; adjust them before using.
+5. In the "corporateActions" field of the JSON, clearly state what actions were found and what adjustment was applied.
+6. If you find no corporate actions, explicitly state "None found" in that field.
+7. Cross-check: if the current market price shown in the data is 3×–10× lower than the EPS/book-value history suggests, a split or bonus has almost certainly occurred — adjust accordingly.
+
 Instructions:
 1. Use ALL the data provided to conduct the analysis
 2. Apply Marshall's framework strictly as defined in your system prompt
 3. Make India-specific adjustments where relevant
 4. Note any missing data in the dataQualityNote field
 5. Calculate all metrics from the raw data provided
-6. Produce SPECIFIC price ranges for the entry zone
+6. Produce SPECIFIC price ranges for the entry zone — ALWAYS in post-split adjusted prices
 7. Apply special scrutiny to: promoter pledge, ROCE trend, debt growth, RPTs
 
 Return ONLY a valid JSON object matching the exact schema. No preamble or explanation outside the JSON.
