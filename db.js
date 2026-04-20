@@ -404,6 +404,117 @@ async function markAllAlertsRead() {
   }
 }
 
+// ─── Fundamental Metrics ──────────────────────────────────────────────────────
+
+function parseMetricNum(str) {
+  if (str === null || str === undefined) return null;
+  const cleaned = String(str).replace(/[₹,×%\sCr]/g, '').replace(/[^0-9.-]/g, '').trim();
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? null : n;
+}
+
+async function saveFundamentalMetrics(analysis) {
+  try {
+    const db = getAdminClient();
+    if (!db) return;
+
+    const g2a = analysis.gate2a?.metrics || {};
+    const g2c = analysis.gate2c?.indicators || {};
+    const g3  = analysis.gate3?.metrics || {};
+    const g3s = analysis.gate3?.valuationScenarios || {};
+
+    const row = {
+      ticker:               analysis.ticker?.toUpperCase(),
+      analysis_date:        analysis.analysisDate || new Date().toISOString().split('T')[0],
+      company:              analysis.company,
+      sector:               analysis.gate1?.parameters?.industry || null,
+      overall_verdict:      analysis.overallVerdict,
+      gate3_verdict:        analysis.gate3?.verdict,
+      financials_type:      analysis.gate2a?.financialsType || 'UNKNOWN',
+      data_confidence:      analysis.gate2a?.dataConfidence || 'MEDIUM',
+      data_sources_count:   analysis.rawDataSources || null,
+
+      // Gate 2a quantitative metrics
+      roce_pct:             parseMetricNum(g2a.roce5yr?.value),
+      roce_confidence:      g2a.roce5yr?.confidence || null,
+      roce_years_of_data:   g2a.roce5yr?.yearsOfData || null,
+      roce_fiscal_year:     g2a.roce5yr?.fiscalYear || null,
+      roe_pct:              parseMetricNum(g2a.roeLast?.value),
+      revenue_cagr_pct:     parseMetricNum(g2a.revenueCAGR5yr?.value),
+      pat_cagr_pct:         parseMetricNum(g2a.patCAGR5yr?.value),
+      debt_equity:          parseMetricNum(g2a.debtEquity?.value),
+      promoter_pledge_pct:  parseMetricNum(g2a.promoterPledge?.value),
+      ocf_quality_pct:      parseMetricNum(g2a.ocfQuality?.value),
+
+      // Gate 2c
+      promoter_holding_pct: parseMetricNum(g2c.promoterHolding?.value),
+
+      // Gate 3 valuation
+      current_price:        parseMetricNum(g3.currentPrice),
+      market_cap_cr:        parseMetricNum(g3.marketCap),
+      ev_oi_x:              parseMetricNum(g3.evOI?.value),
+      mcap_fcf_x:           parseMetricNum(g3.mcapFCF?.value),
+      price_book:           parseMetricNum(g3.priceBook?.value),
+      pe_ratio:             parseMetricNum(g3.peRatio?.value),
+      dividend_yield_pct:   parseMetricNum(g3.dividendYield?.value),
+      net_cash_cr:          parseMetricNum(g3.netCash?.value),
+
+      // Valuation scenarios
+      bear_case_price:      parseMetricNum(g3s.bearCase?.price),
+      base_case_price:      parseMetricNum(g3s.baseCase?.price),
+      bull_case_price:      parseMetricNum(g3s.bullCase?.price),
+
+      // Entry zone
+      entry_zone_low:       null,
+      entry_zone_high:      null,
+    };
+
+    // Parse entry zone "₹1,200–1,500" → low=1200, high=1500
+    if (analysis.gate3?.entryZone) {
+      const m = analysis.gate3.entryZone.replace(/,/g, '').match(/(\d+(?:\.\d+)?)[–\-](\d+(?:\.\d+)?)/);
+      if (m) { row.entry_zone_low = parseFloat(m[1]); row.entry_zone_high = parseFloat(m[2]); }
+    }
+
+    const { error } = await db.from('fundamental_metrics')
+      .upsert(row, { onConflict: 'ticker,analysis_date' });
+    if (error) throw error;
+    console.log(`📊 Saved fundamental metrics for ${analysis.ticker}`);
+  } catch (err) {
+    console.error('Save fundamental metrics error:', err.message);
+  }
+}
+
+async function getMetricsHistory(ticker) {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('fundamental_metrics')
+      .select('*').eq('ticker', ticker.toUpperCase())
+      .order('analysis_date', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Get metrics history error:', err.message);
+    return [];
+  }
+}
+
+async function getAllMetricsLatest() {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('fundamental_metrics')
+      .select('*').order('analysis_date', { ascending: false });
+    if (error) throw error;
+    // deduplicate: latest per ticker
+    const seen = new Set();
+    return (data || []).filter(r => { if (seen.has(r.ticker)) return false; seen.add(r.ticker); return true; });
+  } catch (err) {
+    console.error('Get all metrics error:', err.message);
+    return [];
+  }
+}
+
 module.exports = {
   connectDB, saveAnalysis, getAnalysis, getAllAnalyses, getAnalysisHistory, deleteAnalysis,
   getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist, getCurrentQuarter,
@@ -412,4 +523,6 @@ module.exports = {
   savePriceCheck, getLatestPrices,
   openVirtualTrade, closeVirtualTrade, updateOpenTrades, getAllTrades,
   createAlert, getAlerts, getUnreadAlertCount, markAllAlertsRead,
+  // fundamental metrics
+  saveFundamentalMetrics, getMetricsHistory, getAllMetricsLatest,
 };

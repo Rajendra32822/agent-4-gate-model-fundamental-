@@ -15,6 +15,7 @@ const {
   savePriceCheck, getLatestPrices,
   openVirtualTrade, closeVirtualTrade, updateOpenTrades, getAllTrades,
   createAlert, getAlerts, getUnreadAlertCount, markAllAlertsRead,
+  saveFundamentalMetrics, getMetricsHistory, getAllMetricsLatest,
 } = require('./db');
 
 const app = express();
@@ -178,6 +179,8 @@ app.post('/api/analyse', requireAdmin, analysisLimiter, async (req, res) => {
         const watch = extractWatchFromAnalysis(result.analysis);
         if (watch.ticker) await upsertWatch(watch);
       } catch (e) { console.error('Auto-watch error:', e.message); }
+      // Save structured fundamental metrics for cross-company querying
+      saveFundamentalMetrics(result.analysis).catch(e => console.error('Metrics save error:', e.message));
       sendResult({ analysis: result.analysis });
     } else {
       sendError(result.error);
@@ -217,6 +220,8 @@ app.post('/api/analysis/:ticker/update', requireAdmin, analysisLimiter, async (r
         const watch = extractWatchFromAnalysis(result.analysis);
         if (watch.ticker) await upsertWatch(watch);
       } catch (e) { console.error('Auto-watch update error:', e.message); }
+      // Save structured fundamental metrics
+      saveFundamentalMetrics(result.analysis).catch(e => console.error('Metrics save error:', e.message));
       sendResult({ analysis: result.analysis });
     } else {
       sendError(result.error);
@@ -336,6 +341,26 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     const { error } = await supabaseAdmin.auth.admin.deleteUser(req.params.id);
     if (error) throw error;
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Fundamental Metrics endpoints ───────────────────────────────────────────
+app.get('/api/metrics', requireAuth, async (req, res) => {
+  try {
+    const metrics = await getAllMetricsLatest();
+    res.json(metrics);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/metrics/:ticker', requireAuth, async (req, res) => {
+  try {
+    const history = await getMetricsHistory(req.params.ticker);
+    if (!history.length) return res.status(404).json({ error: 'No metrics found for ticker' });
+    res.json(history);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

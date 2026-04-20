@@ -13,7 +13,9 @@ async function fetchCompanyData(ticker, companyName) {
     `${companyName} ${ticker} NSE promoter holding pledge shareholding FY2025 debt equity`,
     `${companyName} ${ticker} business model moat competitive advantage latest quarterly results`,
     // CRITICAL: always fetch live price + corporate actions so split-adjusted prices are used
-    `${companyName} ${ticker} NSE current share price today 2025 2026 stock split bonus issue rights issue ex-date`
+    `${companyName} ${ticker} NSE current share price today 2025 2026 stock split bonus issue rights issue ex-date`,
+    // Management guidance, concall Q&A, capital allocation intent — critical for Gate 2b
+    `${companyName} ${ticker} management concall earnings call Q3FY25 Q4FY25 guidance outlook capex expansion debt repayment`
   ];
 
   const dataGathered = [];
