@@ -6,10 +6,15 @@ const NodeCache = require('node-cache');
 const rateLimit = require('express-rate-limit');
 const { createClient } = require('@supabase/supabase-js');
 const { runMarshallAnalysis, runUpdateAnalysis, lookupCompany } = require('./agent');
+const { extractWatchFromAnalysis, runDailyPriceCheck } = require('./priceCheck');
 const {
   connectDB, saveAnalysis, getAnalysis,
   getAllAnalyses, getAnalysisHistory, deleteAnalysis,
-  getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist
+  getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist,
+  upsertWatch, getActiveWatches, getAllWatches, updateWatchStatus,
+  savePriceCheck, getLatestPrices,
+  openVirtualTrade, closeVirtualTrade, updateOpenTrades, getAllTrades,
+  createAlert, getAlerts, getUnreadAlertCount, markAllAlertsRead,
 } = require('./db');
 
 const app = express();
@@ -168,6 +173,11 @@ app.post('/api/analyse', requireAdmin, analysisLimiter, async (req, res) => {
     if (result.success) {
       await saveAnalysis(result.analysis);
       cache.set(`analysis_${ticker.toUpperCase()}`, result.analysis);
+      // Auto-create/update watch with entry zone from this analysis
+      try {
+        const watch = extractWatchFromAnalysis(result.analysis);
+        if (watch.ticker) await upsertWatch(watch);
+      } catch (e) { console.error('Auto-watch error:', e.message); }
       sendResult({ analysis: result.analysis });
     } else {
       sendError(result.error);
@@ -202,6 +212,11 @@ app.post('/api/analysis/:ticker/update', requireAdmin, analysisLimiter, async (r
     if (result.success) {
       await saveAnalysis(result.analysis);
       cache.set(`analysis_${ticker}`, result.analysis);
+      // Update watch with fresh prices from quarterly update
+      try {
+        const watch = extractWatchFromAnalysis(result.analysis);
+        if (watch.ticker) await upsertWatch(watch);
+      } catch (e) { console.error('Auto-watch update error:', e.message); }
       sendResult({ analysis: result.analysis });
     } else {
       sendError(result.error);
@@ -322,6 +337,89 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     if (error) throw error;
     res.json({ success: true });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Watches endpoints ────────────────────────────────────────────────────────
+app.get('/api/watches', requireAuth, async (req, res) => {
+  try {
+    const [watches, prices, trades] = await Promise.all([getAllWatches(), getLatestPrices(), getAllTrades()]);
+    const priceMap = {};
+    prices.forEach(p => { priceMap[p.ticker] = { price: p.price, checked_at: p.checked_at }; });
+    const enriched = watches.map(w => ({
+      ...w,
+      latest_price: priceMap[w.ticker]?.price ?? null,
+      price_updated_at: priceMap[w.ticker]?.checked_at ?? null,
+      open_trade: trades.find(t => t.ticker === w.ticker && t.status === 'HOLDING') ?? null,
+    }));
+    res.json(enriched);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.patch('/api/watches/:ticker/status', requireAdmin, async (req, res) => {
+  const { status } = req.body;
+  if (!['ACTIVE', 'PAUSED', 'CANCELLED'].includes(status))
+    return res.status(400).json({ error: 'Invalid status' });
+  await updateWatchStatus(req.params.ticker, status);
+  res.json({ success: true });
+});
+
+// ─── Virtual trades endpoints ─────────────────────────────────────────────────
+app.get('/api/trades', requireAuth, async (req, res) => {
+  try {
+    const trades = await getAllTrades();
+    res.json(trades);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/trades/:ticker/close', requireAdmin, async (req, res) => {
+  const { sellPrice, exitReason } = req.body;
+  if (!sellPrice) return res.status(400).json({ error: 'sellPrice is required' });
+  try {
+    await closeVirtualTrade(req.params.ticker.toUpperCase(), sellPrice, exitReason || 'MANUAL');
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Alerts endpoints ─────────────────────────────────────────────────────────
+app.get('/api/alerts', requireAuth, async (req, res) => {
+  try {
+    const alerts = await getAlerts(100);
+    res.json(alerts);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/alerts/unread-count', requireAuth, async (req, res) => {
+  try {
+    const count = await getUnreadAlertCount();
+    res.json({ count });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/alerts/mark-read', requireAuth, async (req, res) => {
+  try {
+    await markAllAlertsRead();
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Daily price check cron (call from cron-job.org at 4:30pm IST) ────────────
+app.post('/api/cron/price-check', async (req, res) => {
+  const secret = req.headers['x-cron-secret'];
+  if (!secret || secret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const dbFns = {
+      getActiveWatches, savePriceCheck,
+      createAlert, openVirtualTrade, closeVirtualTrade, updateOpenTrades,
+    };
+    const results = await runDailyPriceCheck(dbFns);
+    console.log(`[cron] Price check done: ${results.checked} tickers, ${results.alerts.length} alerts`);
+    res.json({ success: true, ...results });
+  } catch (err) {
+    console.error('[cron] Price check failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

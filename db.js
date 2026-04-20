@@ -198,7 +198,218 @@ function getCurrentQuarter() {
   return `Q4FY${String(year).slice(2)}`;
 }
 
+// ─── Watches ──────────────────────────────────────────────────────────────────
+
+async function upsertWatch(watchData) {
+  try {
+    const db = getAdminClient();
+    if (!db) return null;
+    const { data, error } = await db.from('watches')
+      .upsert({ ...watchData, updated_at: new Date().toISOString() }, { onConflict: 'ticker' })
+      .select().single();
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Upsert watch error:', err.message);
+    return null;
+  }
+}
+
+async function getActiveWatches() {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('watches').select('*').eq('status', 'ACTIVE').order('updated_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Get active watches error:', err.message);
+    return [];
+  }
+}
+
+async function getAllWatches() {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('watches').select('*').order('updated_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Get all watches error:', err.message);
+    return [];
+  }
+}
+
+async function updateWatchStatus(ticker, status) {
+  try {
+    const db = getAdminClient();
+    if (!db) return;
+    await db.from('watches').update({ status, updated_at: new Date().toISOString() }).eq('ticker', ticker.toUpperCase());
+  } catch (err) {
+    console.error('Update watch status error:', err.message);
+  }
+}
+
+// ─── Price checks ─────────────────────────────────────────────────────────────
+
+async function savePriceCheck(ticker, price) {
+  try {
+    const db = getAdminClient();
+    if (!db) return;
+    await db.from('price_checks').insert({ ticker: ticker.toUpperCase(), price, checked_at: new Date().toISOString() });
+  } catch (err) {
+    console.error('Save price check error:', err.message);
+  }
+}
+
+async function getLatestPrices() {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data } = await db.from('price_checks').select('ticker, price, checked_at').order('checked_at', { ascending: false });
+    const seen = new Set();
+    return (data || []).filter(r => { if (seen.has(r.ticker)) return false; seen.add(r.ticker); return true; });
+  } catch (err) {
+    console.error('Get latest prices error:', err.message);
+    return [];
+  }
+}
+
+// ─── Virtual trades ───────────────────────────────────────────────────────────
+
+async function openVirtualTrade(ticker, company, buyPrice) {
+  try {
+    const db = getAdminClient();
+    if (!db) return null;
+    const { data: existing } = await db.from('virtual_trades').select('id').eq('ticker', ticker.toUpperCase()).eq('status', 'HOLDING');
+    if (existing?.length > 0) return null; // already have open position
+    const { data, error } = await db.from('virtual_trades').insert({
+      ticker: ticker.toUpperCase(), company,
+      buy_price: buyPrice, buy_date: new Date().toISOString().split('T')[0],
+      current_price: buyPrice, pnl_pct: 0,
+    }).select().single();
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Open virtual trade error:', err.message);
+    return null;
+  }
+}
+
+async function closeVirtualTrade(ticker, sellPrice, exitReason) {
+  try {
+    const db = getAdminClient();
+    if (!db) return;
+    const { data: trades } = await db.from('virtual_trades').select('*').eq('ticker', ticker.toUpperCase()).eq('status', 'HOLDING');
+    for (const trade of (trades || [])) {
+      const pnl = ((sellPrice - trade.buy_price) / trade.buy_price) * 100;
+      await db.from('virtual_trades').update({
+        sell_price: sellPrice, sell_date: new Date().toISOString().split('T')[0],
+        exit_reason: exitReason, status: 'SOLD',
+        current_price: sellPrice, pnl_pct: parseFloat(pnl.toFixed(2)),
+        last_updated: new Date().toISOString(),
+      }).eq('id', trade.id);
+    }
+  } catch (err) {
+    console.error('Close virtual trade error:', err.message);
+  }
+}
+
+async function updateOpenTrades(ticker, currentPrice) {
+  try {
+    const db = getAdminClient();
+    if (!db) return;
+    const { data: trades } = await db.from('virtual_trades').select('*').eq('ticker', ticker.toUpperCase()).eq('status', 'HOLDING');
+    for (const trade of (trades || [])) {
+      const pnl = ((currentPrice - trade.buy_price) / trade.buy_price) * 100;
+      await db.from('virtual_trades').update({
+        current_price: currentPrice, pnl_pct: parseFloat(pnl.toFixed(2)),
+        last_updated: new Date().toISOString(),
+      }).eq('id', trade.id);
+    }
+  } catch (err) {
+    console.error('Update open trades error:', err.message);
+  }
+}
+
+async function getAllTrades() {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('virtual_trades').select('*').order('buy_date', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Get all trades error:', err.message);
+    return [];
+  }
+}
+
+// ─── Alerts ───────────────────────────────────────────────────────────────────
+
+async function createAlert(ticker, company, alertType, message, triggeredPrice) {
+  try {
+    const db = getAdminClient();
+    if (!db) return null;
+    // Deduplicate: no same ticker+type alert on same calendar day
+    const today = new Date().toISOString().split('T')[0];
+    const { data: existing } = await db.from('alerts')
+      .select('id').eq('ticker', ticker.toUpperCase()).eq('alert_type', alertType)
+      .gte('created_at', today + 'T00:00:00Z');
+    if (existing?.length > 0) return null;
+    const { data, error } = await db.from('alerts').insert({
+      ticker: ticker.toUpperCase(), company, alert_type: alertType,
+      message, triggered_price: triggeredPrice,
+    }).select().single();
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Create alert error:', err.message);
+    return null;
+  }
+}
+
+async function getAlerts(limit = 100) {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('alerts').select('*').order('created_at', { ascending: false }).limit(limit);
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('Get alerts error:', err.message);
+    return [];
+  }
+}
+
+async function getUnreadAlertCount() {
+  try {
+    const db = getAdminClient();
+    if (!db) return 0;
+    const { count } = await db.from('alerts').select('id', { count: 'exact', head: true }).eq('is_read', false);
+    return count || 0;
+  } catch (err) {
+    return 0;
+  }
+}
+
+async function markAllAlertsRead() {
+  try {
+    const db = getAdminClient();
+    if (!db) return;
+    await db.from('alerts').update({ is_read: true }).eq('is_read', false);
+  } catch (err) {
+    console.error('Mark alerts read error:', err.message);
+  }
+}
+
 module.exports = {
   connectDB, saveAnalysis, getAnalysis, getAllAnalyses, getAnalysisHistory, deleteAnalysis,
-  getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist, getCurrentQuarter
+  getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist, getCurrentQuarter,
+  // tracking
+  upsertWatch, getActiveWatches, getAllWatches, updateWatchStatus,
+  savePriceCheck, getLatestPrices,
+  openVirtualTrade, closeVirtualTrade, updateOpenTrades, getAllTrades,
+  createAlert, getAlerts, getUnreadAlertCount, markAllAlertsRead,
 };

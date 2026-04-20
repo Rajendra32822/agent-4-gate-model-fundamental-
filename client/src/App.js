@@ -9,6 +9,8 @@ import AnalysisView from './pages/AnalysisView';
 import NewAnalysis from './pages/NewAnalysis';
 import Profile from './pages/Profile';
 import AdminPanel from './pages/AdminPanel';
+import WatchesPage from './pages/WatchesPage';
+import authFetch from './lib/api';
 import './styles/global.css';
 
 // Poll /api/health until server responds, with progress callbacks
@@ -37,6 +39,7 @@ function AppRouter() {
   const [loadError, setLoadError] = useState('');
   const [isInviteFlow, setIsInviteFlow] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
   const abortRef = useRef(null);
 
   useEffect(() => {
@@ -108,7 +111,19 @@ function AppRouter() {
   }, []);
 
   useEffect(() => {
-    if (user) fetchAnalyses();
+    if (user) {
+      fetchAnalyses();
+      // Poll unread alert count every 60s
+      const fetchUnread = async () => {
+        try {
+          const res = await authFetch('/api/alerts/unread-count');
+          if (res.ok) { const d = await res.json(); setUnreadAlerts(d.count || 0); }
+        } catch {}
+      };
+      fetchUnread();
+      const interval = setInterval(fetchUnread, 60000);
+      return () => { abortRef.current?.abort(); clearInterval(interval); };
+    }
     return () => abortRef.current?.abort();
   }, [user, fetchAnalyses]);
 
@@ -141,7 +156,7 @@ function AppRouter() {
 
   return (
     <div className="app">
-      <Header page={page} onNavigate={navigateTo} isAdmin={isAdmin} profile={profile} onSignOut={signOut} />
+      <Header page={page} onNavigate={navigateTo} isAdmin={isAdmin} profile={profile} onSignOut={signOut} unreadAlerts={unreadAlerts} onViewAlerts={() => { setUnreadAlerts(0); navigateTo('watches'); }} />
       <main className="main-content">
         {page === 'dashboard' && (
           <Dashboard
@@ -167,6 +182,9 @@ function AppRouter() {
         {page === 'new' && isAdmin && (
           <NewAnalysis onComplete={onAnalysisComplete} onBack={() => navigateTo('dashboard')} />
         )}
+        {page === 'watches' && (
+          <WatchesPage onSelectStock={(ticker) => navigateTo('analysis', ticker)} isAdmin={isAdmin} />
+        )}
         {page === 'profile' && (
           <Profile onSelectStock={(ticker) => navigateTo('analysis', ticker)} />
         )}
@@ -176,7 +194,7 @@ function AppRouter() {
   );
 }
 
-function Header({ page, onNavigate, isAdmin, profile, onSignOut }) {
+function Header({ page, onNavigate, isAdmin, profile, onSignOut, unreadAlerts, onViewAlerts }) {
   const initials = profile?.name
     ? profile.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     : '??';
@@ -206,6 +224,14 @@ function Header({ page, onNavigate, isAdmin, profile, onSignOut }) {
               Admin
             </button>
           )}
+          <button className={`nav-btn ${page === 'watches' ? 'active' : ''}`} onClick={() => onNavigate('watches')} style={{ position: 'relative' }}>
+            Tracking
+            {unreadAlerts > 0 && (
+              <span style={{ position:'absolute', top:2, right:2, background:'#ef4444', color:'#fff', fontSize:9, fontWeight:700, borderRadius:'50%', width:14, height:14, display:'flex', alignItems:'center', justifyContent:'center', lineHeight:1 }}>
+                {unreadAlerts > 9 ? '9+' : unreadAlerts}
+              </span>
+            )}
+          </button>
           <button className={`nav-btn ${page === 'profile' ? 'active' : ''}`} onClick={() => onNavigate('profile')}>
             <span style={{
               display:'inline-flex', alignItems:'center', justifyContent:'center',
