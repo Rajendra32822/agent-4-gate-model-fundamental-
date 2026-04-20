@@ -55,6 +55,23 @@ function hashColor(str) {
 }
 
 export default function AdminPanel() {
+  // Backfill watches
+  const [backfillLoading, setBackfillLoading] = useState(false);
+  const [backfillResult, setBackfillResult] = useState(null);
+
+  const handleBackfill = async () => {
+    setBackfillLoading(true); setBackfillResult(null);
+    try {
+      const res = await authFetch('/api/admin/backfill-watches', { method: 'POST' });
+      const data = await res.json();
+      setBackfillResult(res.ok ? `✓ Done — ${data.created} watches created, ${data.skipped} skipped.` : `⚠ ${data.error}`);
+    } catch (e) {
+      setBackfillResult('⚠ ' + e.message);
+    } finally {
+      setBackfillLoading(false);
+    }
+  };
+
   // Invite section
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
@@ -171,6 +188,27 @@ export default function AdminPanel() {
           <p style={styles.pageSubtitle}>
             Invite new members and manage existing accounts.
           </p>
+        </div>
+
+        {/* Backfill Watches */}
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <div style={styles.cardIcon}>◎</div>
+            <div>
+              <h2 style={styles.cardTitle}>Backfill Entry Zone Watches</h2>
+              <p style={styles.cardSubtitle}>
+                Run once to create watches for all existing analyses. New analyses auto-create watches going forward.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleBackfill}
+            disabled={backfillLoading}
+            style={{ background: '#c9a84c', color: '#0d0f11', border: 'none', borderRadius: 8, padding: '10px 22px', fontSize: 14, fontWeight: 700, cursor: backfillLoading ? 'not-allowed' : 'pointer', opacity: backfillLoading ? 0.7 : 1, fontFamily: 'inherit' }}
+          >
+            {backfillLoading ? 'Creating watches…' : '↻ Backfill All Watches'}
+          </button>
+          {backfillResult && <div style={{ marginTop: 12, fontSize: 13, color: backfillResult.startsWith('✓') ? '#22c55e' : '#f87171' }}>{backfillResult}</div>}
         </div>
 
         {/* Invite Section */}
