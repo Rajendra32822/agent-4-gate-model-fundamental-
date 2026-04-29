@@ -1,11 +1,102 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const { OpenAI } = require('openai');
 const { MARSHALL_SYSTEM_PROMPT } = require('./marshallPrompt');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// OpenRouter fallback client — only active if OPENROUTER_API_KEY is set
+const openRouterClient = process.env.OPENROUTER_API_KEY
+  ? new OpenAI({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: process.env.OPENROUTER_API_KEY,
+      defaultHeaders: { 'HTTP-Referer': 'https://agent-4-gate-model-fundamental.onrender.com' },
+    })
+  : null;
+
+const FALLBACK_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-3-27b-it';
+
+// Returns true when the Anthropic error means credits/quota are exhausted
+function isCreditsExhausted(err) {
+  if (err?.status === 402) return true;
+  const msg = (err?.message || err?.error?.message || '').toLowerCase();
+  return msg.includes('credit') || msg.includes('billing') || msg.includes('quota') || msg.includes('insufficient_quota');
+}
+
+/**
+ * Calls the main analysis model (Sonnet).
+ * On credit exhaustion, automatically retries via OpenRouter using the configured fallback model.
+ */
+async function callAnalysisModel({ system, userContent, maxTokens = 16000, onFallback }) {
+  try {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: 'user', content: userContent }],
+    });
+    return response.content.filter(b => b.type === 'text').map(b => b.text).join('');
+  } catch (err) {
+    if (!openRouterClient || !isCreditsExhausted(err)) throw err;
+
+    console.warn(`⚠️  Anthropic credits exhausted — switching to OpenRouter (${FALLBACK_MODEL})`);
+    onFallback?.();
+
+    const response = await openRouterClient.chat.completions.create({
+      model: FALLBACK_MODEL,
+      max_tokens: Math.min(maxTokens, 8192), // most OpenRouter models cap at 8192
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: userContent },
+      ],
+    });
+    return response.choices[0].message.content || '';
+  }
+}
+
+/**
+ * Calls Haiku with the web_search tool.
+ * On credit exhaustion, falls back to OpenRouter without web search (uses model training data).
+ */
+async function callSearchModel({ userContent, maxTokens = 1500 }) {
+  const searchClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  try {
+    const response = await searchClient.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: maxTokens,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages: [{ role: 'user', content: userContent }],
+    });
+    return response.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+  } catch (err) {
+    if (!openRouterClient || !isCreditsExhausted(err)) throw err;
+
+    console.warn(`⚠️  Anthropic credits exhausted for search — using OpenRouter (${FALLBACK_MODEL}) without web search`);
+
+    const response = await openRouterClient.chat.completions.create({
+      model: FALLBACK_MODEL,
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: userContent }],
+    });
+    return response.choices[0].message.content || '';
+  }
+}
+
+function parseJsonFromText(text) {
+  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) ||
+                    text.match(/```\s*([\s\S]*?)\s*```/);
+  const jsonStr = jsonMatch ? jsonMatch[1] : text.trim();
+  try {
+    return JSON.parse(jsonStr);
+  } catch {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}') + 1;
+    if (start !== -1 && end > start) return JSON.parse(text.slice(start, end));
+    throw new Error('Could not parse response as JSON');
+  }
+}
+
 /**
  * Fetches financial data for a company using web search
- * Reduced to 3 queries with longer delays to avoid rate limits
  */
 async function fetchCompanyData(ticker, companyName) {
   const searchQueries = [
@@ -15,40 +106,21 @@ async function fetchCompanyData(ticker, companyName) {
     // CRITICAL: always fetch live price + corporate actions so split-adjusted prices are used
     `${companyName} ${ticker} NSE current share price today 2025 2026 stock split bonus issue rights issue ex-date`,
     // Management guidance, concall Q&A, capital allocation intent — critical for Gate 2b
-    `${companyName} ${ticker} management concall earnings call Q3FY25 Q4FY25 guidance outlook capex expansion debt repayment`
+    `${companyName} ${ticker} management concall earnings call Q3FY25 Q4FY25 guidance outlook capex expansion debt repayment`,
   ];
 
   const dataGathered = [];
-  const searchClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   for (const query of searchQueries) {
     try {
-      const response = await searchClient.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1500,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages: [{
-          role: 'user',
-          content: `Search and return ALL financial data found: "${query}".
-          Include exact numbers: revenue, profit, ROCE, ROE, debt ratios, promoter holding %, promoter pledge %, P/E, P/B, EV/EBITDA across multiple years.`
-        }]
+      const text = await callSearchModel({
+        userContent: `Search and return ALL financial data found: "${query}".
+          Include exact numbers: revenue, profit, ROCE, ROE, debt ratios, promoter holding %, promoter pledge %, P/E, P/B, EV/EBITDA across multiple years.`,
       });
-
-      const textContent = response.content
-        .filter(block => block.type === 'text')
-        .map(block => block.text)
-        .join('\n');
-
-      if (textContent.trim()) {
-        dataGathered.push({ query, data: textContent });
-      }
-
-      // Longer delay between searches to avoid rate limits
+      if (text.trim()) dataGathered.push({ query, data: text });
       await new Promise(resolve => setTimeout(resolve, 2000));
-
     } catch (err) {
       console.error(`Search failed for query: ${query}`, err.message);
-      // Continue with next query even if one fails
     }
   }
 
@@ -102,45 +174,20 @@ Instructions:
 Return ONLY a valid JSON object matching the exact schema. No preamble or explanation outside the JSON.
 `;
 
-    onProgress?.({ stage: 'gates', message: 'Claude is analysing all gates...', progress: 65 });
+    onProgress?.({ stage: 'gates', message: 'AI is analysing all gates...', progress: 65 });
 
-    // Add delay before main analysis call to respect rate limits
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    const analysisResponse = await client.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 16000,
+    const responseText = await callAnalysisModel({
       system: MARSHALL_SYSTEM_PROMPT,
-      messages: [{
-        role: 'user',
-        content: analysisPrompt
-      }]
+      userContent: analysisPrompt,
+      maxTokens: 16000,
+      onFallback: () => onProgress?.({ stage: 'gates', message: 'Switched to fallback AI — continuing analysis...', progress: 65 }),
     });
 
     onProgress?.({ stage: 'processing', message: 'Processing analysis results...', progress: 85 });
 
-    const responseText = analysisResponse.content
-      .filter(block => block.type === 'text')
-      .map(block => block.text)
-      .join('');
-
-    // Parse JSON — handle markdown code blocks if present
-    let analysisResult;
-    try {
-      const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) ||
-                        responseText.match(/```\s*([\s\S]*?)\s*```/);
-      const jsonStr = jsonMatch ? jsonMatch[1] : responseText.trim();
-      analysisResult = JSON.parse(jsonStr);
-    } catch (parseErr) {
-      const jsonStart = responseText.indexOf('{');
-      const jsonEnd = responseText.lastIndexOf('}') + 1;
-      if (jsonStart !== -1 && jsonEnd > jsonStart) {
-        analysisResult = JSON.parse(responseText.slice(jsonStart, jsonEnd));
-      } else {
-        throw new Error('Could not parse analysis response as JSON');
-      }
-    }
-
+    const analysisResult = parseJsonFromText(responseText);
     analysisResult.analysisDate = new Date().toISOString().split('T')[0];
     analysisResult.ticker = ticker.toUpperCase();
     analysisResult.rawDataSources = rawData.length;
@@ -151,11 +198,7 @@ Return ONLY a valid JSON object matching the exact schema. No preamble or explan
 
   } catch (error) {
     console.error('Analysis error:', error);
-    return {
-      success: false,
-      error: error.message,
-      details: error.stack
-    };
+    return { success: false, error: error.message, details: error.stack };
   }
 }
 
@@ -164,29 +207,16 @@ Return ONLY a valid JSON object matching the exact schema. No preamble or explan
  */
 async function lookupCompany(query) {
   try {
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 300,
-      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-      messages: [{
-        role: 'user',
-        content: `Find the NSE ticker symbol and full company name for: "${query}" (Indian stock market).
+    const text = await callSearchModel({
+      userContent: `Find the NSE ticker symbol and full company name for: "${query}" (Indian stock market).
         Return ONLY a JSON object: {"ticker": "SYMBOL", "name": "Full Company Name", "exchange": "NSE", "sector": "sector name"}
-        If not found return: {"error": "Company not found"}`
-      }]
+        If not found return: {"error": "Company not found"}`,
+      maxTokens: 300,
     });
 
-    const text = response.content
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
-      .join('');
-
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
-    }
+    if (jsonMatch) return JSON.parse(jsonMatch[0]);
     return { error: 'Could not identify company' };
-
   } catch (err) {
     return { error: err.message };
   }
@@ -200,30 +230,17 @@ async function fetchUpdateData(ticker, companyName) {
   const searchQueries = [
     `${companyName} ${ticker} quarterly results ${quarter} revenue profit EBITDA ROCE`,
     `${companyName} BSE NSE corporate announcement board meeting dividend buyback 2025 2026`,
-    `${companyName} ${ticker} latest news analyst rating price target earnings outlook`
+    `${companyName} ${ticker} latest news analyst rating price target earnings outlook`,
   ];
 
   const dataGathered = [];
-  const searchClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   for (const query of searchQueries) {
     try {
-      const response = await searchClient.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1500,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages: [{
-          role: 'user',
-          content: `Search and extract ALL new financial data: "${query}". Focus on data published in last 90 days. Include exact numbers.`
-        }]
+      const text = await callSearchModel({
+        userContent: `Search and extract ALL new financial data: "${query}". Focus on data published in last 90 days. Include exact numbers.`,
       });
-
-      const textContent = response.content
-        .filter(block => block.type === 'text')
-        .map(block => block.text)
-        .join('\n');
-
-      if (textContent.trim()) dataGathered.push({ query, data: textContent });
+      if (text.trim()) dataGathered.push({ query, data: text });
       await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (err) {
       console.error(`Update search failed: ${query}`, err.message);
@@ -273,13 +290,7 @@ async function runUpdateAnalysis(ticker, companyName, oldAnalysis, onProgress) {
 
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    const updateResponse = await client.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 16000,
-      system: MARSHALL_SYSTEM_PROMPT,
-      messages: [{
-        role: 'user',
-        content: `UPDATE the existing Marshall 4-gate analysis for ${companyName} (${ticker}) using fresh data.
+    const updatePrompt = `UPDATE the existing Marshall 4-gate analysis for ${companyName} (${ticker}) using fresh data.
 
 PREVIOUS ANALYSIS (dated ${oldAnalysis.analysisDate}):
 ${oldSummary}
@@ -299,33 +310,18 @@ Instructions:
      "previousVerdict": "WATCH",
      "changes": [{ "gate": "Gate 2a", "metric": "ROCE", "previous": "18%", "updated": "22%", "direction": "improved" }]
    }
-5. Return ONLY valid JSON. No preamble.`
-      }]
+5. Return ONLY valid JSON. No preamble.`;
+
+    const responseText = await callAnalysisModel({
+      system: MARSHALL_SYSTEM_PROMPT,
+      userContent: updatePrompt,
+      maxTokens: 16000,
+      onFallback: () => onProgress?.({ stage: 'gates', message: 'Switched to fallback AI — continuing update...', progress: 60 }),
     });
 
     onProgress?.({ stage: 'processing', message: 'Processing updated analysis...', progress: 85 });
 
-    const responseText = updateResponse.content
-      .filter(block => block.type === 'text')
-      .map(block => block.text)
-      .join('');
-
-    let analysisResult;
-    try {
-      const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/) ||
-                        responseText.match(/```\s*([\s\S]*?)\s*```/);
-      const jsonStr = jsonMatch ? jsonMatch[1] : responseText.trim();
-      analysisResult = JSON.parse(jsonStr);
-    } catch {
-      const jsonStart = responseText.indexOf('{');
-      const jsonEnd = responseText.lastIndexOf('}') + 1;
-      if (jsonStart !== -1 && jsonEnd > jsonStart) {
-        analysisResult = JSON.parse(responseText.slice(jsonStart, jsonEnd));
-      } else {
-        throw new Error('Could not parse updated analysis as JSON');
-      }
-    }
-
+    const analysisResult = parseJsonFromText(responseText);
     analysisResult.analysisDate = new Date().toISOString().split('T')[0];
     analysisResult.ticker = ticker.toUpperCase();
     analysisResult.rawDataSources = freshData.length;
