@@ -13,7 +13,7 @@ const openRouterClient = process.env.OPENROUTER_API_KEY
     })
   : null;
 
-const FALLBACK_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-3-27b-it';
+const FALLBACK_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it';
 
 // Returns true when the Anthropic error means credits/quota are exhausted
 function isCreditsExhausted(err) {
