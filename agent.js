@@ -15,11 +15,20 @@ const openRouterClient = process.env.OPENROUTER_API_KEY
 
 const FALLBACK_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it';
 
-// Returns true when the Anthropic error means credits/quota are exhausted
-function isCreditsExhausted(err) {
+// Returns true for any error where switching to OpenRouter makes sense:
+// credits exhausted, network failures, timeouts, or Anthropic being unreachable
+function shouldUseFallback(err) {
+  // HTTP-level credit/billing errors
   if (err?.status === 402) return true;
   const msg = (err?.message || err?.error?.message || '').toLowerCase();
-  return msg.includes('credit') || msg.includes('billing') || msg.includes('quota') || msg.includes('insufficient_quota');
+  if (msg.includes('credit') || msg.includes('billing') || msg.includes('quota') || msg.includes('insufficient_quota')) return true;
+  // Network-level failures (ETIMEDOUT, ECONNREFUSED, ENOTFOUND, etc.)
+  const cause = err?.cause || err;
+  const code = cause?.code || cause?.errno || '';
+  if (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ECONNRESET') return true;
+  // status undefined = never got an HTTP response (network/TLS failure)
+  if (err?.status === undefined && err?.cause) return true;
+  return false;
 }
 
 /**
@@ -36,7 +45,7 @@ async function callAnalysisModel({ system, userContent, maxTokens = 16000, onFal
     });
     return response.content.filter(b => b.type === 'text').map(b => b.text).join('');
   } catch (err) {
-    if (!openRouterClient || !isCreditsExhausted(err)) throw err;
+    if (!openRouterClient || !shouldUseFallback(err)) throw err;
 
     console.warn(`⚠️  Anthropic credits exhausted — switching to OpenRouter (${FALLBACK_MODEL})`);
     onFallback?.();
@@ -68,7 +77,7 @@ async function callSearchModel({ userContent, maxTokens = 1500 }) {
     });
     return response.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
   } catch (err) {
-    if (!openRouterClient || !isCreditsExhausted(err)) throw err;
+    if (!openRouterClient || !shouldUseFallback(err)) throw err;
 
     console.warn(`⚠️  Anthropic credits exhausted for search — using OpenRouter (${FALLBACK_MODEL}) without web search`);
 
