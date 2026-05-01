@@ -13,7 +13,10 @@ const openRouterClient = process.env.OPENROUTER_API_KEY
     })
   : null;
 
+// Analysis fallback: strong reasoning model
 const FALLBACK_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it';
+// Search fallback: Perplexity Sonar has real-time web search built in
+const FALLBACK_SEARCH_MODEL = process.env.OPENROUTER_SEARCH_MODEL || 'perplexity/sonar';
 
 // Returns true for any error where switching to OpenRouter makes sense:
 // credits exhausted, network failures, timeouts, or Anthropic being unreachable
@@ -64,7 +67,8 @@ async function callAnalysisModel({ system, userContent, maxTokens = 16000, onFal
 
 /**
  * Calls Haiku with the web_search tool.
- * On credit exhaustion, falls back to OpenRouter without web search (uses model training data).
+ * On Anthropic failure, falls back to Perplexity Sonar on OpenRouter which has
+ * real-time web search built in — so live prices and recent data still come through.
  */
 async function callSearchModel({ userContent, maxTokens = 1500 }) {
   const searchClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -79,10 +83,11 @@ async function callSearchModel({ userContent, maxTokens = 1500 }) {
   } catch (err) {
     if (!openRouterClient || !shouldUseFallback(err)) throw err;
 
-    console.warn(`⚠️  Anthropic credits exhausted for search — using OpenRouter (${FALLBACK_MODEL}) without web search`);
+    // Use Perplexity Sonar — it has live web search, so prices/market data are current
+    console.warn(`⚠️  Anthropic unavailable for search — switching to ${FALLBACK_SEARCH_MODEL} (live web search)`);
 
     const response = await openRouterClient.chat.completions.create({
-      model: FALLBACK_MODEL,
+      model: FALLBACK_SEARCH_MODEL,
       max_tokens: maxTokens,
       messages: [{ role: 'user', content: userContent }],
     });
