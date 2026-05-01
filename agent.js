@@ -13,10 +13,11 @@ const openRouterClient = process.env.OPENROUTER_API_KEY
     })
   : null;
 
-// Analysis fallback: strong reasoning model
-const FALLBACK_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it';
-// Search fallback: Perplexity Sonar has real-time web search built in
-const FALLBACK_SEARCH_MODEL = process.env.OPENROUTER_SEARCH_MODEL || 'perplexity/sonar';
+// Analysis fallback: free reasoning model (no credits needed)
+const FALLBACK_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free';
+// Search fallback: also free — NOTE: no live web access, uses training data
+// Upgrade to perplexity/sonar (paid) for real-time prices when Anthropic is down
+const FALLBACK_SEARCH_MODEL = process.env.OPENROUTER_SEARCH_MODEL || 'google/gemma-4-26b-a4b-it:free';
 
 // Returns true for any error where switching to OpenRouter makes sense:
 // credits exhausted, network failures, timeouts, or Anthropic being unreachable
@@ -83,8 +84,8 @@ async function callSearchModel({ userContent, maxTokens = 1500 }) {
   } catch (err) {
     if (!openRouterClient || !shouldUseFallback(err)) throw err;
 
-    // Use Perplexity Sonar — it has live web search, so prices/market data are current
-    console.warn(`⚠️  Anthropic unavailable for search — switching to ${FALLBACK_SEARCH_MODEL} (live web search)`);
+    // Free fallback — no live web access, data comes from model training knowledge
+    console.warn(`⚠️  Anthropic unavailable for search — switching to ${FALLBACK_SEARCH_MODEL} (no live web, upgrade to perplexity/sonar for real-time data)`);
 
     const response = await openRouterClient.chat.completions.create({
       model: FALLBACK_SEARCH_MODEL,
