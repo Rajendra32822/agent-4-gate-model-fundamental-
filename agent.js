@@ -13,11 +13,12 @@ const openRouterClient = process.env.OPENROUTER_API_KEY
     })
   : null;
 
-// Analysis fallback: free reasoning model (no credits needed)
-const FALLBACK_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free';
-// Search fallback: also free — NOTE: no live web access, uses training data
-// Upgrade to perplexity/sonar (paid) for real-time prices when Anthropic is down
-const FALLBACK_SEARCH_MODEL = process.env.OPENROUTER_SEARCH_MODEL || 'google/gemma-4-26b-a4b-it:free';
+// Analysis fallback: strong reasoning model (~$0.002 per analysis)
+const FALLBACK_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it';
+// Search fallback: Perplexity Sonar — real-time web search (~$0.015 per analysis)
+// If you have no OpenRouter credits, set OPENROUTER_SEARCH_MODEL=google/gemma-4-26b-a4b-it:free
+// but note that free models have no live web access so prices/market data will be stale
+const FALLBACK_SEARCH_MODEL = process.env.OPENROUTER_SEARCH_MODEL || 'perplexity/sonar';
 
 // Returns true for any error where switching to OpenRouter makes sense:
 // credits exhausted, network failures, timeouts, or Anthropic being unreachable
