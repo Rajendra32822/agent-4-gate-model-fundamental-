@@ -4,6 +4,209 @@ import authFetch from '../lib/api';
 const statusColor = s =>
   s === 'PASS' ? 'var(--pass)' : s === 'FAIL' ? 'var(--fail)' : s === 'WARN' ? 'var(--warn)' : 'var(--text-3)';
 
+// Extract a numeric price from strings like "₹2,450", "Rs. 2,450", "2450"
+function extractPrice(str) {
+  if (str == null) return null;
+  if (typeof str === 'number') return str;
+  const cleaned = String(str).replace(/[₹,\s]/g, '').match(/(\d+(?:\.\d+)?)/);
+  return cleaned ? parseFloat(cleaned[1]) : null;
+}
+
+// Visual indicator showing where Current Market Price sits between bear/base/bull cases.
+// Helps users instantly see whether a stock is undervalued, fair-valued, or overvalued
+// relative to the analyst's price scenarios.
+function CmpPositionBar({ scenarios, cmp }) {
+  const bear = extractPrice(scenarios?.bearCase?.price);
+  const base = extractPrice(scenarios?.baseCase?.price);
+  const bull = extractPrice(scenarios?.bullCase?.price);
+
+  if (!bear || !base || !bull || !cmp) return null;
+
+  // Position CMP on a 0–100 scale where 0=bear, 50=base, 100=bull.
+  // Allow overflow markers when CMP is outside the bear↔bull range.
+  let pct;
+  if (cmp <= base) {
+    pct = ((cmp - bear) / (base - bear)) * 50;
+  } else {
+    pct = 50 + ((cmp - base) / (bull - base)) * 50;
+  }
+  const clampedPct = Math.max(-5, Math.min(105, pct));
+  const isOverflow = pct < 0 || pct > 100;
+
+  // Interpretation logic — directly maps to Marshall's value-investing rules
+  let verdict, verdictColor, advice;
+  if (cmp < bear) {
+    verdict = 'Deep Value · Below Bear Case'; verdictColor = '#10b981';
+    advice = 'Margin of safety: even if the thesis breaks, downside is limited. Strong buy candidate if quality gates pass.';
+  } else if (cmp < (bear + base) / 2) {
+    verdict = 'Undervalued · Closer to Bear'; verdictColor = '#10b981';
+    advice = 'Good entry zone with reasonable margin of safety. Buy candidate if quality gates pass.';
+  } else if (cmp < base * 1.05) {
+    verdict = 'Fair Value · Near Base Case'; verdictColor = '#c9a84c';
+    advice = 'No margin of safety — you are paying for the most likely outcome. Wait for a dip below bear case before buying.';
+  } else if (cmp < (base + bull) / 2) {
+    verdict = 'Slightly Expensive · Above Base'; verdictColor = '#f59e0b';
+    advice = 'Pricing in better-than-base scenarios. Risk-reward unfavourable. Avoid fresh entry.';
+  } else if (cmp < bull) {
+    verdict = 'Expensive · Near Bull Case'; verdictColor = '#ef4444';
+    advice = 'Pricing in the optimistic scenario. Limited upside, significant downside risk. Avoid or trim.';
+  } else {
+    verdict = 'Extreme Premium · Above Bull'; verdictColor = '#ef4444';
+    advice = 'Market is pricing beyond the most optimistic scenario. Significant correction risk. Avoid.';
+  }
+
+  const fmtInr = (n) => `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+  const gapFromBase = ((cmp - base) / base * 100);
+  const gapLabel = gapFromBase >= 0
+    ? `${gapFromBase.toFixed(1)}% above base case`
+    : `${Math.abs(gapFromBase).toFixed(1)}% below base case`;
+
+  return (
+    <div className="cmp-position-wrap">
+      <div className="cmp-position-header">
+        <span className="cmp-position-cmp">CMP <b className="font-mono">{fmtInr(cmp)}</b></span>
+        <span className="cmp-position-verdict" style={{ color: verdictColor }}>{verdict}</span>
+        <span className="cmp-position-gap">{gapLabel}</span>
+      </div>
+
+      <div className="cmp-bar-track">
+        {/* gradient zones: deep-value (green) → fair (gold) → expensive (red) */}
+        <div className="cmp-zone zone-value" style={{ left: '0%',   width: '40%' }} />
+        <div className="cmp-zone zone-fair"  style={{ left: '40%',  width: '20%' }} />
+        <div className="cmp-zone zone-exp"   style={{ left: '60%',  width: '40%' }} />
+
+        {/* Tick marks for bear / base / bull */}
+        <div className="cmp-tick" style={{ left: '0%' }}>
+          <span className="cmp-tick-label">Bear</span>
+          <span className="cmp-tick-price font-mono">{fmtInr(bear)}</span>
+        </div>
+        <div className="cmp-tick" style={{ left: '50%' }}>
+          <span className="cmp-tick-label">Base</span>
+          <span className="cmp-tick-price font-mono">{fmtInr(base)}</span>
+        </div>
+        <div className="cmp-tick" style={{ left: '100%' }}>
+          <span className="cmp-tick-label">Bull</span>
+          <span className="cmp-tick-price font-mono">{fmtInr(bull)}</span>
+        </div>
+
+        {/* CMP indicator */}
+        <div
+          className={`cmp-marker ${isOverflow ? 'overflow' : ''}`}
+          style={{ left: `${clampedPct}%`, borderColor: verdictColor }}
+        >
+          <div className="cmp-marker-pulse" style={{ background: verdictColor }} />
+        </div>
+      </div>
+
+      <div className="cmp-position-advice">{advice}</div>
+
+      <style>{`
+        .cmp-position-wrap {
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: var(--radius-lg);
+          padding: 16px 18px 20px;
+          margin-bottom: 14px;
+        }
+        .cmp-position-header {
+          display: flex;
+          align-items: baseline;
+          gap: 12px;
+          margin-bottom: 28px;
+          flex-wrap: wrap;
+        }
+        .cmp-position-cmp { font-size: 14px; color: var(--text-2); }
+        .cmp-position-cmp b { font-size: 18px; color: var(--text); margin-left: 4px; }
+        .cmp-position-verdict { font-size: 13px; font-weight: 600; }
+        .cmp-position-gap { font-size: 11px; color: var(--text-3); margin-left: auto; }
+
+        .cmp-bar-track {
+          position: relative;
+          height: 8px;
+          background: var(--surface3);
+          border-radius: 4px;
+          margin: 0 8px 50px 8px;
+        }
+        .cmp-zone {
+          position: absolute;
+          top: 0; bottom: 0;
+          border-radius: 4px;
+          opacity: 0.25;
+        }
+        .zone-value { background: linear-gradient(90deg, #10b981, #10b981 80%, #c9a84c); }
+        .zone-fair  { background: #c9a84c; }
+        .zone-exp   { background: linear-gradient(90deg, #c9a84c, #ef4444 50%, #ef4444); }
+
+        .cmp-tick {
+          position: absolute;
+          top: 14px;
+          transform: translateX(-50%);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 2px;
+        }
+        .cmp-tick::before {
+          content: '';
+          position: absolute;
+          top: -14px;
+          width: 1px;
+          height: 14px;
+          background: var(--border2);
+        }
+        .cmp-tick-label {
+          font-size: 9px;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: var(--text-3);
+        }
+        .cmp-tick-price { font-size: 11px; color: var(--text-2); }
+
+        .cmp-marker {
+          position: absolute;
+          top: -6px;
+          transform: translateX(-50%);
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          background: var(--surface);
+          border: 3px solid #c9a84c;
+          z-index: 2;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+          transition: left 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .cmp-marker.overflow { border-style: dashed; }
+        .cmp-marker-pulse {
+          position: absolute;
+          top: -3px; left: -3px;
+          width: 20px; height: 20px;
+          border-radius: 50%;
+          opacity: 0.4;
+          animation: cmpPulse 1.8s ease-in-out infinite;
+        }
+        @keyframes cmpPulse {
+          0%, 100% { transform: scale(1); opacity: 0.4; }
+          50% { transform: scale(1.5); opacity: 0; }
+        }
+
+        .cmp-position-advice {
+          font-size: 12px;
+          color: var(--text-2);
+          line-height: 1.6;
+          padding: 10px 12px;
+          background: var(--surface2);
+          border-left: 2px solid var(--accent);
+          border-radius: 4px;
+        }
+
+        @media (max-width: 600px) {
+          .cmp-position-gap { display: none; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 function MetricRow({ label, value, benchmark, status }) {
   return (
     <div className="metric-row">
@@ -418,6 +621,12 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
           {gate3.valuationScenarios && (
             <div style={{ marginTop: 16 }}>
               <div className="section-label">Valuation Scenarios</div>
+
+              <CmpPositionBar
+                scenarios={gate3.valuationScenarios}
+                cmp={analysis.liveQuote?.price ?? extractPrice(gate3.metrics?.currentPrice)}
+              />
+
               <div className="scenarios-row">
                 {Object.entries(gate3.valuationScenarios).map(([k, s]) => (
                   <div key={k} className={`scenario-card scenario-${k}`}>

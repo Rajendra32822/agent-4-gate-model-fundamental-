@@ -306,6 +306,11 @@ If Data Source 1 has no price, check all other sources. If genuinely not found, 
     analysisResult.ticker = ticker.toUpperCase();
     analysisResult.rawDataSources = rawData.length;
 
+    // Override AI-extracted price/marketCap with deterministic Yahoo Finance data
+    // (AI extraction is unreliable for mid/small caps — Yahoo is the source of truth)
+    onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 92 });
+    await enrichWithLiveMarketData(analysisResult);
+
     onProgress?.({ stage: 'complete', message: 'Analysis complete!', progress: 100 });
 
     return { success: true, analysis: analysisResult };
@@ -313,6 +318,52 @@ If Data Source 1 has no price, check all other sources. If genuinely not found, 
   } catch (error) {
     console.error('Analysis error:', error);
     return { success: false, error: sanitizeErrorForClient(error), details: undefined };
+  }
+}
+
+/**
+ * Post-processes an analysis JSON by overriding AI-extracted live market
+ * figures (current price, market cap, P/E, P/B, dividend yield, 52w range)
+ * with authoritative data from Yahoo Finance. Falls back silently if Yahoo
+ * is unreachable — the AI-extracted values stay as-is.
+ */
+async function enrichWithLiveMarketData(analysis) {
+  if (!analysis?.ticker || !analysis?.gate3?.metrics) return;
+  const { fetchYahooQuote, formatInrPrice, formatInrCrore } = require('./priceCheck');
+  try {
+    const q = await fetchYahooQuote(analysis.ticker);
+    const m = analysis.gate3.metrics;
+
+    // Plain-string fields in the schema
+    if (q.price != null)     m.currentPrice = formatInrPrice(q.price);
+    if (q.marketCap != null) m.marketCap    = formatInrCrore(q.marketCap);
+
+    // Object-shape fields: only override the .value, keep the model's status/benchmark
+    if (q.peRatio != null) {
+      m.peRatio = { ...(typeof m.peRatio === 'object' ? m.peRatio : {}), value: `${q.peRatio.toFixed(1)}×`, status: m.peRatio?.status || 'INFO' };
+    }
+    if (q.priceBook != null) {
+      m.priceBook = { ...(typeof m.priceBook === 'object' ? m.priceBook : {}), value: `${q.priceBook.toFixed(2)}x` };
+    }
+    if (q.dividendYield != null) {
+      m.dividendYield = { ...(typeof m.dividendYield === 'object' ? m.dividendYield : {}), value: `${q.dividendYield.toFixed(2)}%`, status: m.dividendYield?.status || 'INFO' };
+    }
+
+    // Store the raw Yahoo snapshot for the UI to use (e.g. CMP-vs-scenarios bar)
+    analysis.liveQuote = {
+      price:            q.price,
+      previousClose:    q.previousClose,
+      fiftyTwoWeekHigh: q.fiftyTwoWeekHigh,
+      fiftyTwoWeekLow:  q.fiftyTwoWeekLow,
+      marketCap:        q.marketCap,
+      source:           q.source,
+      exchange:         q.exchange,
+      fetchedAt:        new Date().toISOString(),
+    };
+
+    console.log(`📈 Live market data enriched for ${analysis.ticker}: ₹${q.price} (source: ${q.source})`);
+  } catch (err) {
+    console.warn(`⚠️  Could not enrich ${analysis.ticker} with live data: ${err.message}. Keeping AI-extracted values.`);
   }
 }
 
@@ -454,6 +505,10 @@ Instructions:
     analysisResult.rawDataSources = freshData.length;
     analysisResult.isUpdate = true;
     analysisResult.previousAnalysisDate = oldAnalysis.analysisDate;
+
+    // Enrich quarterly updates with live Yahoo data too
+    onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 92 });
+    await enrichWithLiveMarketData(analysisResult);
 
     onProgress?.({ stage: 'complete', message: 'Update complete!', progress: 100 });
 

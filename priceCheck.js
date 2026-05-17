@@ -2,41 +2,118 @@ const https = require('https');
 
 // ─── Yahoo Finance helpers ────────────────────────────────────────────────────
 
-function toYahooSymbol(ticker) {
-  return `${ticker.toUpperCase()}.NS`;
+function toYahooSymbol(ticker, exchange = 'NS') {
+  return `${ticker.toUpperCase()}.${exchange}`;
 }
 
-function fetchYahooPrice(ticker) {
+// Generic HTTPS GET that returns parsed JSON
+function httpsGetJson(url) {
   return new Promise((resolve, reject) => {
-    const symbol = toYahooSymbol(ticker);
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=5d`;
-    const options = {
+    const req = https.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json',
       },
       timeout: 10000,
-    };
-    const req = https.get(url, options, (res) => {
+    }, (res) => {
       let data = '';
       res.on('data', chunk => { data += chunk; });
       res.on('end', () => {
-        try {
-          const json = JSON.parse(data);
-          const price = json?.chart?.result?.[0]?.meta?.regularMarketPrice;
-          if (price && price > 0) {
-            resolve(Number(price.toFixed(2)));
-          } else {
-            reject(new Error(`No price for ${ticker} — may not be listed as ${symbol}`));
-          }
-        } catch (e) {
-          reject(new Error(`Parse error for ${ticker}: ${e.message}`));
-        }
+        try { resolve({ status: res.statusCode, json: JSON.parse(data) }); }
+        catch (e) { reject(new Error(`Parse error: ${e.message}`)); }
       });
     });
-    req.on('timeout', () => { req.destroy(); reject(new Error(`Timeout fetching ${ticker}`)); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
     req.on('error', reject);
   });
+}
+
+// Existing simple price-only fetcher — preserved for the daily price-check cron.
+async function fetchYahooPrice(ticker) {
+  for (const ex of ['NS', 'BO']) {
+    const symbol = toYahooSymbol(ticker, ex);
+    try {
+      const { json } = await httpsGetJson(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=5d`);
+      const price = json?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if (price && price > 0) return Number(price.toFixed(2));
+    } catch { /* try next exchange */ }
+  }
+  throw new Error(`No price for ${ticker} on NSE or BSE`);
+}
+
+/**
+ * Deterministic market-data fetcher used to enrich AI analyses.
+ * Returns the freshest live numbers from Yahoo Finance — far more reliable
+ * than asking an LLM to extract price from search results.
+ *
+ * Returns: { price, previousClose, marketCap, peRatio, priceBook, dividendYield,
+ *            fiftyTwoWeekHigh, fiftyTwoWeekLow, currency, exchange }
+ *
+ * All numeric fields are nullable. Caller should only override AI-extracted
+ * values when this method returns a non-null replacement.
+ */
+async function fetchYahooQuote(ticker) {
+  // Try v7 quote endpoint first — returns the most fields in one call.
+  // Falls back to chart endpoint (price only) if v7 is blocked.
+  for (const ex of ['NS', 'BO']) {
+    const symbol = toYahooSymbol(ticker, ex);
+
+    // Attempt 1: v7 quote endpoint (returns marketCap, peRatio, priceBook, etc.)
+    try {
+      const { status, json } = await httpsGetJson(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`);
+      const r = json?.quoteResponse?.result?.[0];
+      if (status === 200 && r && (r.regularMarketPrice || r.regularMarketPreviousClose)) {
+        return {
+          price:             r.regularMarketPrice ?? r.regularMarketPreviousClose ?? null,
+          previousClose:     r.regularMarketPreviousClose ?? null,
+          marketCap:         r.marketCap ?? null,
+          peRatio:           r.trailingPE ?? null,
+          priceBook:         r.priceToBook ?? null,
+          dividendYield:     r.trailingAnnualDividendYield != null ? r.trailingAnnualDividendYield * 100 : null,
+          fiftyTwoWeekHigh:  r.fiftyTwoWeekHigh ?? null,
+          fiftyTwoWeekLow:   r.fiftyTwoWeekLow ?? null,
+          currency:          r.currency || 'INR',
+          exchange:          ex,
+          source:            'yahoo-v7',
+        };
+      }
+    } catch { /* fall through to chart endpoint */ }
+
+    // Attempt 2: v8 chart endpoint (price + 52w only, no marketCap)
+    try {
+      const { json } = await httpsGetJson(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=5d`);
+      const meta = json?.chart?.result?.[0]?.meta;
+      if (meta?.regularMarketPrice && meta.regularMarketPrice > 0) {
+        return {
+          price:             meta.regularMarketPrice,
+          previousClose:     meta.previousClose ?? meta.chartPreviousClose ?? null,
+          marketCap:         null,
+          peRatio:           null,
+          priceBook:         null,
+          dividendYield:     null,
+          fiftyTwoWeekHigh:  meta.fiftyTwoWeekHigh ?? null,
+          fiftyTwoWeekLow:   meta.fiftyTwoWeekLow ?? null,
+          currency:          meta.currency || 'INR',
+          exchange:          ex,
+          source:            'yahoo-chart',
+        };
+      }
+    } catch { /* try next exchange */ }
+  }
+  throw new Error(`No Yahoo data for ${ticker} on NSE or BSE`);
+}
+
+// Format helpers for converting raw numbers into the display strings
+// the analysis schema expects (e.g. "₹1,23,456 Cr").
+function formatInrPrice(n) {
+  if (n == null || isNaN(n)) return null;
+  return `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+}
+
+function formatInrCrore(rupees) {
+  if (rupees == null || isNaN(rupees)) return null;
+  const cr = rupees / 1e7; // 1 crore = 10 million
+  return `₹${Number(cr.toFixed(0)).toLocaleString('en-IN')} Cr`;
 }
 
 // ─── Parse entry zone / price strings from analysis JSON ─────────────────────
@@ -148,4 +225,7 @@ async function runDailyPriceCheck(db) {
   return results;
 }
 
-module.exports = { fetchYahooPrice, extractWatchFromAnalysis, runDailyPriceCheck, parseEntryZone, parsePrice };
+module.exports = {
+  fetchYahooPrice, fetchYahooQuote, formatInrPrice, formatInrCrore,
+  extractWatchFromAnalysis, runDailyPriceCheck, parseEntryZone, parsePrice,
+};
