@@ -112,31 +112,110 @@ function parseJsonFromText(text) {
 }
 
 /**
- * Fetches financial data for a company using web search
+ * Fetches financial data for a company using targeted web searches.
+ * Each query has a specific instruction to extract the exact data needed.
  */
 async function fetchCompanyData(ticker, companyName) {
-  const searchQueries = [
-    `site:screener.in ${ticker} consolidated profit loss balance sheet ROCE ROE revenue`,
-    `${companyName} ${ticker} NSE promoter holding pledge shareholding FY2025 debt equity`,
-    `${companyName} ${ticker} business model moat competitive advantage latest quarterly results`,
-    // CRITICAL: always fetch live price + corporate actions so split-adjusted prices are used
-    `${companyName} ${ticker} NSE current share price today 2025 2026 stock split bonus issue rights issue ex-date`,
-    // Management guidance, concall Q&A, capital allocation intent — critical for Gate 2b
-    `${companyName} ${ticker} management concall earnings call Q3FY25 Q4FY25 guidance outlook capex expansion debt repayment`,
+  const today      = new Date().toISOString().split('T')[0];
+  const todayHuman = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+  const cy         = new Date().getFullYear();
+  const py         = cy - 1;
+  const fy         = `FY${String(cy).slice(2)}`;
+  const pfyShort   = `FY${String(py).slice(2)}`;
+  const q          = getCurrentUpdateQuarter();
+
+  const searches = [
+    // ── 1. LIVE PRICE + MARKET CAP ─────────────────────────────────────────
+    {
+      query: `${companyName} ${ticker} NSE share price market cap today ${todayHuman}`,
+      instruction: `Find the CURRENT stock price and market capitalisation of ${companyName} (${ticker}) as of ${todayHuman} (${today}).
+Extract and return ALL of the following as exact numbers — do NOT estimate, only report what you find:
+- Current share price in ₹ (as of today ${today})
+- Market capitalisation in ₹ Cr
+- 52-week high price (₹) and 52-week low price (₹)
+- P/E ratio (TTM) and P/B ratio (Price to Book)
+- Dividend yield (%)
+- Enterprise Value (EV) in ₹ Cr
+If multiple prices found from different sources, list all with their timestamps.`,
+    },
+
+    // ── 2. CORE 5-YEAR FINANCIALS from screener.in ─────────────────────────
+    {
+      query: `site:screener.in ${ticker} consolidated profit loss balance sheet ROCE ROE ${pfyShort} ${fy}`,
+      instruction: `Extract ALL financial data for ${companyName} (${ticker}) from screener.in for each year FY2021 through ${fy}.
+Return exact figures per year:
+- Revenue / Net Sales (₹ Cr)
+- EBITDA (₹ Cr) and EBITDA margin %
+- Operating Profit / EBIT (₹ Cr)
+- Net Profit / PAT (₹ Cr) and PAT margin %
+- ROCE % and ROE %
+- Total Debt (₹ Cr) and Cash (₹ Cr)
+- Debt-to-Equity ratio
+- Free Cash Flow (₹ Cr) and Operating Cash Flow (₹ Cr)
+- EPS (₹) and Book Value per share (₹)
+State clearly: CONSOLIDATED or STANDALONE financials.`,
+    },
+
+    // ── 3. SHAREHOLDING + PLEDGE ───────────────────────────────────────────
+    {
+      query: `${companyName} ${ticker} shareholding pattern promoter pledge ${q} March ${cy} NSE BSE`,
+      instruction: `Extract the latest shareholding and pledge data for ${companyName} (${ticker}) as of ${q} or most recent quarter.
+Return exact numbers:
+- Promoter holding % (with quarter/date)
+- Promoter pledge % (% of promoter shares pledged)
+- FII / FPI holding %
+- DII / Mutual Fund holding %
+- Public / Retail holding %
+- Promoter holding trend over last 4 quarters (increasing/decreasing/stable)
+- Any recent pledge creation or release`,
+    },
+
+    // ── 4. LATEST QUARTERLY RESULTS ────────────────────────────────────────
+    {
+      query: `${companyName} ${ticker} ${q} quarterly results revenue profit EBITDA YoY ${pfyShort} ${fy}`,
+      instruction: `Extract the latest quarterly results (${q}) for ${companyName} (${ticker}).
+Return exact numbers:
+- Revenue (₹ Cr) — current quarter and same quarter last year, YoY growth %
+- EBITDA (₹ Cr) and margin %
+- Net Profit / PAT (₹ Cr) and YoY growth %
+- EPS for the quarter (₹)
+- Management guidance for next quarter or full year ${fy}
+- Order book or backlog (₹ Cr) if applicable
+- Any exceptional/one-time items`,
+    },
+
+    // ── 5. CORPORATE ACTIONS + MOAT + MANAGEMENT ──────────────────────────
+    {
+      query: `${companyName} ${ticker} stock split bonus issue ${py} ${cy} concall guidance moat competitive advantage`,
+      instruction: `Search for the following for ${companyName} (${ticker}):
+
+CORPORATE ACTIONS (critical — wrong price without this):
+- Any stock split in ${py} or ${cy}: state ratio and ex-date
+- Any bonus issue in ${py} or ${cy}: state ratio and ex-date
+- Post-adjustment current price if a split/bonus occurred
+
+MANAGEMENT & GUIDANCE (from most recent concall or earnings call):
+- Revenue or PAT guidance for ${fy}
+- Capex planned (₹ Cr) and purpose
+- Debt repayment plan or net debt target
+- New product lines, geographies, or acquisitions announced
+
+COMPETITIVE POSITION:
+- Primary moat: brand / patent / licence / network / switching costs / cost advantage
+- Key competitors and estimated market share
+- Threats: new entrants, Chinese competition, regulatory risk`,
+    },
   ];
 
   const dataGathered = [];
 
-  for (const query of searchQueries) {
+  for (const { query, instruction } of searches) {
     try {
-      const text = await callSearchModel({
-        userContent: `Search and return ALL financial data found: "${query}".
-          Include exact numbers: revenue, profit, ROCE, ROE, debt ratios, promoter holding %, promoter pledge %, P/E, P/B, EV/EBITDA across multiple years.`,
-      });
+      const text = await callSearchModel({ userContent: instruction, maxTokens: 2000 });
       if (text.trim()) dataGathered.push({ query, data: text });
       await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (err) {
-      console.error(`Search failed for query: ${query}`, err.message);
+      console.error(`Search failed for: ${query}`, err.message);
     }
   }
 
@@ -188,6 +267,13 @@ Instructions:
 7. Apply special scrutiny to: promoter pledge, ROCE trend, debt growth, RPTs
 
 Return ONLY a valid JSON object matching the exact schema. No preamble or explanation outside the JSON.
+
+MANDATORY — Gate 3 fields that MUST be populated from the search data above:
+- gate3.metrics.currentPrice: use the LIVE price from Data Source 1 (today's date, in ₹)
+- gate3.metrics.marketCap: use the market cap from Data Source 1 (in ₹ Cr)
+- gate3.metrics.peRatio: use the P/E ratio from Data Source 1
+- gate3.metrics.priceBook: use the P/B ratio from Data Source 1
+If Data Source 1 has no price, check all other sources. If genuinely not found write "Not found in search data" — do NOT invent a number.
 `;
 
     onProgress?.({ stage: 'gates', message: 'AI is analysing all gates...', progress: 65 });
