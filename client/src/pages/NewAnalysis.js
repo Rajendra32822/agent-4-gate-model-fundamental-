@@ -214,6 +214,7 @@ export default function NewAnalysis({ onComplete, onBack }) {
               onChange={e => setQuery(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleLookup(query)}
               disabled={lookupLoading}
+              autoFocus
             />
             <button
               className="btn btn-secondary"
@@ -242,6 +243,23 @@ export default function NewAnalysis({ onComplete, onBack }) {
             </div>
           )}
         </div>
+
+        {/* PRIMARY CTA — appears immediately when ticker selected, no scrolling needed */}
+        {(ticker && companyName) && (
+          <div className="analyse-cta-top">
+            <div className="analyse-cta-top-info">
+              <div className="cta-top-label">Ready to analyse</div>
+              <div className="cta-top-name">
+                <span className="font-mono" style={{ color: 'var(--accent)' }}>{ticker}</span>
+                <span style={{ color: 'var(--text-3)', margin: '0 8px' }}>·</span>
+                <span>{companyName}</span>
+              </div>
+            </div>
+            <button className="btn btn-primary btn-analyse-top" onClick={handleAnalyse}>
+              ▶  Analyse {ticker}
+            </button>
+          </div>
+        )}
 
         <div className="divider" />
 
@@ -284,14 +302,14 @@ export default function NewAnalysis({ onComplete, onBack }) {
           </div>
         </div>
 
-        {/* CTA */}
+        {/* Secondary CTA at bottom for users who scroll through */}
         {(ticker && companyName) && (
           <div className="analyse-cta">
             <button className="btn btn-primary" style={{ fontSize: 16, padding: '12px 32px' }} onClick={handleAnalyse}>
-              Analyse {ticker} →
+              ▶  Analyse {ticker}
             </button>
             <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 8 }}>
-              Takes 2–4 minutes · Uses web search · Powered by Claude
+              Takes 2–4 minutes · Uses live web search · AI-powered
             </div>
           </div>
         )}
@@ -346,6 +364,42 @@ export default function NewAnalysis({ onComplete, onBack }) {
         .gate-preview-title { font-size: 13px; color: var(--text); margin: 3px 0; font-weight: 600; }
         .gate-preview-desc { font-size: 10px; color: var(--text-3); line-height: 1.4; }
         .analyse-cta { text-align: center; padding: 24px 0; }
+        .analyse-cta-top {
+          margin-top: 16px;
+          margin-bottom: 18px;
+          padding: 16px 20px;
+          background: linear-gradient(90deg, rgba(201,168,76,0.10), rgba(201,168,76,0.04));
+          border: 1px solid rgba(201,168,76,0.35);
+          border-radius: var(--radius-lg);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          flex-wrap: wrap;
+          animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn {
+          from { opacity: 0; transform: translateY(-6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .cta-top-label {
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: var(--text-3);
+          margin-bottom: 4px;
+        }
+        .cta-top-name { font-size: 15px; color: var(--text); }
+        .btn-analyse-top {
+          font-size: 15px !important;
+          padding: 12px 28px !important;
+          font-weight: 700 !important;
+          flex-shrink: 0;
+        }
+        @media (max-width: 600px) {
+          .analyse-cta-top { flex-direction: column; align-items: stretch; text-align: center; }
+          .btn-analyse-top { width: 100%; }
+        }
         @media (max-width: 768px) {
           .gates-preview { grid-template-columns: repeat(2, 1fr); }
         }
