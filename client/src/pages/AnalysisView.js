@@ -398,9 +398,19 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
             <div>
               <div className="section-label">Valuation Metrics</div>
               <div className="metrics-table">
-                {Object.entries(gate3.metrics).map(([k, m]) => (
-                  <MetricRow key={k} label={formatMetricLabel(k)} value={m.value} benchmark={m.benchmark} status={m.status} />
-                ))}
+                {Object.entries(gate3.metrics).map(([k, m]) => {
+                  // currentPrice and marketCap are plain strings in the schema; others are {value, benchmark, status} objects
+                  const isString = typeof m === 'string' || typeof m === 'number';
+                  return (
+                    <MetricRow
+                      key={k}
+                      label={formatMetricLabel(k)}
+                      value={isString ? m : m?.value}
+                      benchmark={isString ? null : m?.benchmark}
+                      status={isString ? null : m?.status}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}
