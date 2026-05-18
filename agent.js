@@ -2,6 +2,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { OpenAI } = require('openai');
 const { MARSHALL_SYSTEM_PROMPT } = require('./marshallPrompt');
 const { computeConfidenceScore } = require('./confidence');
+const { verifyAnalysis } = require('./verification');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -368,11 +369,14 @@ Example:
     analysisResult.rawDataSources = rawData.length;
 
     // Override AI-extracted price/marketCap with deterministic Yahoo Finance data
-    // (AI extraction is unreliable for mid/small caps — Yahoo is the source of truth)
-    onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 90 });
+    onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 88 });
     await enrichWithLiveMarketData(analysisResult);
 
-    // Compute data-quality confidence score
+    // Run Tier-1 verification (sanity, citations, cross-source consensus, freshness)
+    onProgress?.({ stage: 'processing', message: 'Verifying data quality...', progress: 91 });
+    verifyAnalysis(analysisResult, rawData);
+
+    // Compute data-quality confidence score (now reads verification flags)
     analysisResult.confidence = computeConfidenceScore(analysisResult);
     console.log(`📊 Confidence for ${ticker}: ${analysisResult.confidence.score}/100 (${analysisResult.confidence.band})`);
 
@@ -596,8 +600,12 @@ Instructions:
     analysisResult.previousAnalysisDate = oldAnalysis.analysisDate;
 
     // Enrich quarterly updates with live Yahoo data too
-    onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 90 });
+    onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 88 });
     await enrichWithLiveMarketData(analysisResult);
+
+    // Verify the updated analysis
+    onProgress?.({ stage: 'processing', message: 'Verifying data quality...', progress: 91 });
+    verifyAnalysis(analysisResult, freshData);
 
     // Compute confidence on updated analysis (no auto-retry for updates)
     analysisResult.confidence = computeConfidenceScore(analysisResult);
