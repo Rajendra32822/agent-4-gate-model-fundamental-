@@ -235,6 +235,151 @@ COMPETITIVE POSITION:
 }
 
 /**
+ * Build a single focused web query for one specific metric that needs Tier 2 verification.
+ */
+function buildVerificationQuery(metricKey, ticker, companyName) {
+  const templates = {
+    roce5yr: {
+      query: `site:screener.in ${ticker} ROCE 5 year average consolidated`,
+      instruction: `Find the 5-year average ROCE % for ${companyName} (${ticker}) from screener.in. Return only the number with a one-sentence quote from the page.`,
+    },
+    currentPrice: {
+      query: `${companyName} ${ticker} NSE current share price today live`,
+      instruction: `Find today's current share price of ${companyName} (${ticker}) on NSE. Return the price in ₹ and the exact line you found it in.`,
+    },
+    marketCap: {
+      query: `${companyName} ${ticker} market capitalisation NSE Cr today`,
+      instruction: `Find the current market capitalisation of ${companyName} (${ticker}) in ₹ Cr. Return the number and the source line.`,
+    },
+    promoterPledge: {
+      query: `${companyName} ${ticker} promoter pledge shareholding pattern latest`,
+      instruction: `Find the latest promoter pledge % for ${companyName} (${ticker}) from the latest shareholding disclosure. Return the percentage and source line.`,
+    },
+    peRatio: {
+      query: `site:screener.in ${ticker} P/E ratio TTM`,
+      instruction: `Find the trailing twelve-month P/E ratio for ${companyName} (${ticker}) from screener.in. Return the P/E number and source line.`,
+    },
+    promoterHolding: {
+      query: `${companyName} ${ticker} promoter holding shareholding pattern latest quarter`,
+      instruction: `Find the latest promoter holding % for ${companyName} (${ticker}). Return the percentage and source line.`,
+    },
+    priceBook: {
+      query: `site:screener.in ${ticker} price to book ratio`,
+      instruction: `Find the current price-to-book ratio for ${companyName} (${ticker}) from screener.in. Return the P/B number and source line.`,
+    },
+    roeLast: {
+      query: `site:screener.in ${ticker} ROE latest year consolidated`,
+      instruction: `Find the latest annual ROE % for ${companyName} (${ticker}) from screener.in. Return the percentage and source line.`,
+    },
+    debtEquity: {
+      query: `site:screener.in ${ticker} debt to equity ratio latest`,
+      instruction: `Find the current debt-to-equity ratio for ${companyName} (${ticker}) from screener.in. Return the ratio and source line.`,
+    },
+  };
+  return templates[metricKey] || null;
+}
+
+/**
+ * Patch a metric's value in-place, handling both object-shape and bare-string metrics.
+ */
+function patchMetricValue(analysis, key, newNumber) {
+  const formatters = {
+    currentPrice: (n) => `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`,
+    marketCap:    (n) => `₹${Number(n.toFixed(0)).toLocaleString('en-IN')} Cr`,
+    roce5yr:      (n) => `${n}%`,
+    roeLast:      (n) => `${n}%`,
+    revenueCAGR5yr: (n) => `${n}%`,
+    patCAGR5yr:   (n) => `${n}%`,
+    promoterHolding: (n) => `${n}%`,
+    promoterPledge:  (n) => `${n}%`,
+    ocfQuality:   (n) => `${n}%`,
+    debtEquity:   (n) => `${n.toFixed(2)}x`,
+    peRatio:      (n) => `${n.toFixed(1)}×`,
+    priceBook:    (n) => `${n.toFixed(2)}x`,
+  };
+  const fmt = formatters[key];
+  if (!fmt) return;
+  const formatted = fmt(newNumber);
+
+  if (analysis.gate2a?.metrics?.[key]) {
+    if (typeof analysis.gate2a.metrics[key] === 'object') {
+      analysis.gate2a.metrics[key].value = formatted;
+    } else {
+      analysis.gate2a.metrics[key] = formatted;
+    }
+    return;
+  }
+  if (analysis.gate2c?.indicators?.[key]) {
+    if (typeof analysis.gate2c.indicators[key] === 'object') {
+      analysis.gate2c.indicators[key].value = formatted;
+    } else {
+      analysis.gate2c.indicators[key] = formatted;
+    }
+    return;
+  }
+  if (analysis.gate3?.metrics?.[key] !== undefined) {
+    if (typeof analysis.gate3.metrics[key] === 'object') {
+      analysis.gate3.metrics[key].value = formatted;
+    } else {
+      analysis.gate3.metrics[key] = formatted;
+    }
+  }
+}
+
+/**
+ * Run Tier 2: for each critical metric that failed verification, fire one
+ * focused web search and try to extract a better value. Capped at 3 calls.
+ */
+async function runTier2Refetch(analysis, ticker, companyName) {
+  const { runSanityCheck, extractAllNumericMentions } = require('./verification');
+  const verifications = analysis.verifications || {};
+  const priorityOrder = [
+    'currentPrice', 'marketCap', 'peRatio', 'priceBook',
+    'roce5yr', 'roeLast', 'debtEquity', 'promoterPledge', 'ocfQuality',
+    'revenueCAGR5yr', 'patCAGR5yr',
+    'promoterHolding',
+  ];
+
+  let refetchCount = 0;
+  const REFETCH_CAP = 3;
+
+  for (const metricKey of priorityOrder) {
+    if (refetchCount >= REFETCH_CAP) break;
+    const v = verifications[metricKey];
+    if (!v) continue;
+    const needsRefetch =
+      v.verdict === 'IMPLAUSIBLE' ||
+      v.verdict === 'UNSOURCED' ||
+      v.consensus?.agreementBand === 'LOW';
+    if (!needsRefetch) continue;
+
+    const tmpl = buildVerificationQuery(metricKey, ticker, companyName);
+    if (!tmpl) continue;
+
+    try {
+      console.log(`🔎 Tier-2 re-fetch for ${ticker}.${metricKey} (verdict was ${v.verdict})`);
+      const text = await callSearchModel({ userContent: tmpl.instruction, maxTokens: 600 });
+      const mentions = extractAllNumericMentions(text, metricKey);
+      if (mentions.length > 0) {
+        const newValue = mentions[0];
+        const sanity = runSanityCheck(metricKey, newValue);
+        if (sanity?.passed) {
+          patchMetricValue(analysis, metricKey, newValue);
+          v.refetched = true;
+          v.refetchSource = 'single-query verification';
+          v.refetchValue = newValue;
+          v.sanity = sanity;
+          v.verdict = 'VERIFIED';
+        }
+      }
+    } catch (err) {
+      console.error(`Tier-2 re-fetch failed for ${metricKey}:`, err.message);
+    }
+    refetchCount += 1;
+  }
+}
+
+/**
  * Returns extra search queries to prepend on a retry attempt, chosen
  * based on which confidence signals failed on attempt 1.
  */
@@ -375,6 +520,16 @@ Example:
     // Run Tier-1 verification (sanity, citations, cross-source consensus, freshness)
     onProgress?.({ stage: 'processing', message: 'Verifying data quality...', progress: 91 });
     verifyAnalysis(analysisResult, rawData);
+
+    // Tier 2: selective re-fetch for failing critical metrics (capped at 3 calls)
+    if (process.env.ENABLE_TIER2_REFETCH !== 'false') {
+      const needsRefetch = Object.values(analysisResult.verifications || {})
+        .some(v => v.verdict === 'IMPLAUSIBLE' || v.verdict === 'UNSOURCED' || v.consensus?.agreementBand === 'LOW');
+      if (needsRefetch) {
+        onProgress?.({ stage: 'processing', message: 'Re-fetching unverified metrics...', progress: 93 });
+        await runTier2Refetch(analysisResult, ticker, companyName);
+      }
+    }
 
     // Compute data-quality confidence score (now reads verification flags)
     analysisResult.confidence = computeConfidenceScore(analysisResult);
