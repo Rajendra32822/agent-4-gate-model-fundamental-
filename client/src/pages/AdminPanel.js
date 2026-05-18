@@ -132,6 +132,35 @@ export default function AdminPanel() {
     }
   };
 
+  // Phase 5: ingest a single ticker's structured data from screener.in
+  const [ingestTicker, setIngestTicker] = useState('');
+  const [ingestLoading, setIngestLoading] = useState(false);
+  const [ingestResult, setIngestResult] = useState(null);
+
+  const handleIngest = async (e) => {
+    e.preventDefault();
+    if (!ingestTicker.trim()) return;
+    setIngestLoading(true); setIngestResult(null);
+    try {
+      const res = await authFetch(`/api/admin/ingest/${ingestTicker.trim().toUpperCase()}`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        const errs = (data.errors || []).map(e => `${e.stage}: ${e.error}`).join('; ');
+        setIngestResult(
+          errs
+            ? `⚠ Partial — ${data.periods_added} periods. Errors: ${errs}`
+            : `✓ Done — ${data.periods_added} periods stored for ${data.ticker}`
+        );
+      } else {
+        setIngestResult(`⚠ ${data.error}`);
+      }
+    } catch (e) {
+      setIngestResult('⚠ ' + e.message);
+    } finally {
+      setIngestLoading(false);
+    }
+  };
+
   // Invite section
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
@@ -332,6 +361,37 @@ export default function AdminPanel() {
             {outcomesLoading ? 'Computing outcomes…' : '📈 Backfill Analysis Outcomes'}
           </button>
           {outcomesResult && <div style={{ marginTop: 12, fontSize: 13, color: outcomesResult.startsWith('✓') ? '#22c55e' : '#f87171' }}>{outcomesResult}</div>}
+        </div>
+
+        {/* Ingest single ticker's fundamentals (Phase 5) */}
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <div style={styles.cardIcon}>📥</div>
+            <div>
+              <h2 style={styles.cardTitle}>Ingest Ticker Fundamentals</h2>
+              <p style={styles.cardSubtitle}>
+                Fetch 5y annual P&L + Balance Sheet + Cash Flow + recent quarterly P&L from screener.in (consolidated) for one ticker, then compute derived ratios + aggregates. Run before analysing the ticker to use the structured-data path.
+              </p>
+            </div>
+          </div>
+          <form onSubmit={handleIngest} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              value={ingestTicker}
+              onChange={e => setIngestTicker(e.target.value)}
+              placeholder="HFCL, BHARTIARTL, …"
+              className="input-field"
+              style={{ minWidth: 200, textTransform: 'uppercase' }}
+            />
+            <button
+              type="submit"
+              disabled={ingestLoading || !ingestTicker.trim()}
+              style={{ background: '#3b82f6', color: '#0d0f11', border: 'none', borderRadius: 8, padding: '10px 22px', fontSize: 14, fontWeight: 700, cursor: ingestLoading ? 'not-allowed' : 'pointer', opacity: ingestLoading ? 0.7 : 1, fontFamily: 'inherit' }}
+            >
+              {ingestLoading ? 'Ingesting…' : '📥 Ingest Now'}
+            </button>
+          </form>
+          {ingestResult && <div style={{ marginTop: 12, fontSize: 13, color: ingestResult.startsWith('✓') ? '#22c55e' : '#f87171' }}>{ingestResult}</div>}
         </div>
 
         {/* Invite Section */}
