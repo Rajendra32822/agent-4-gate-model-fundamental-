@@ -7,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 const { createClient } = require('@supabase/supabase-js');
 const { runMarshallAnalysis, runUpdateAnalysis, lookupCompany } = require('./agent');
 const { extractWatchFromAnalysis, runDailyPriceCheck } = require('./priceCheck');
+const { computeConfidenceScore } = require('./confidence');
 const {
   connectDB, saveAnalysis, getAnalysis,
   getAllAnalyses, getAnalysisHistory, deleteAnalysis,
@@ -462,6 +463,32 @@ app.post('/api/admin/backfill-watches', requireAdmin, async (req, res) => {
         if (!watch.ticker) { results.skipped++; continue; }
         await upsertWatch(watch);
         results.created++;
+      } catch (e) {
+        results.errors.push({ ticker: row.ticker, error: e.message });
+      }
+    }
+    res.json({ success: true, ...results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Admin: backfill confidence scores onto all existing analyses ────────────
+app.post('/api/admin/backfill-confidence', requireAdmin, async (req, res) => {
+  try {
+    const analyses = await getAllAnalyses();
+    const results = { updated: 0, errors: [], bands: { HIGH: 0, MEDIUM: 0, LOW: 0 } };
+    for (const row of analyses) {
+      try {
+        const full = await getAnalysis(row.ticker);
+        if (!full) continue;
+        const confidence = computeConfidenceScore(full);
+        full.confidence = confidence;
+        await saveAnalysis(full);
+        await saveFundamentalMetrics(full);
+        cache.del(`analysis_${row.ticker}`);
+        results.updated++;
+        results.bands[confidence.band]++;
       } catch (e) {
         results.errors.push({ ticker: row.ticker, error: e.message });
       }
