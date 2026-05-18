@@ -328,6 +328,47 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
     }).catch(e => { setError(e.message); setUpdating(false); });
   };
 
+  // Full re-run for LOW-confidence analyses — goes through /api/analyse which
+  // triggers the auto-retry logic if the new attempt also scores LOW.
+  // /update endpoint reuses old data and skips the retry; not appropriate here.
+  const handleRerun = () => {
+    if (!analysis?.company) return;
+    setUpdating(true);
+    setUpdateProgress({ stage: 'starting', message: 'Re-running with fresh data...', progress: 5 });
+
+    authFetch('/api/analyse', {
+      method: 'POST',
+      body: JSON.stringify({ ticker, companyName: analysis.company, forceRefresh: true })
+    }).then(async res => {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          try {
+            const event = JSON.parse(line.slice(5).trim());
+            if (event.type === 'progress') {
+              setUpdateProgress({ stage: event.stage, message: event.message, progress: event.progress });
+            } else if (event.type === 'result') {
+              setAnalysis(event.analysis);
+              setUpdating(false);
+              if (onAnalysisComplete) onAnalysisComplete(ticker);
+            } else if (event.type === 'error') {
+              setError(event.error);
+              setUpdating(false);
+            }
+          } catch {}
+        }
+      }
+    }).catch(e => { setError(e.message); setUpdating(false); });
+  };
+
   if (loading) return <LoadingSkeleton />;
   if (error) return <ErrorState error={error} onBack={onBack} />;
   if (!analysis) return null;
@@ -395,10 +436,10 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
             {isAdmin && analysis.confidence?.band === 'LOW' && (
               <button
                 className="btn-update"
-                onClick={handleUpdate}
+                onClick={handleRerun}
                 disabled={updating}
                 style={{ borderColor: '#ef4444', color: '#ef4444' }}
-                title={`Confidence is LOW (${analysis.confidence.score}/100). Re-runs with fresh data and recomputes the score.`}
+                title={`Confidence is LOW (${analysis.confidence.score}/100). Full re-run with fresh data + auto-retry.`}
               >
                 ⚠ Re-run (LOW conf.)
               </button>

@@ -42,6 +42,11 @@ const SIGNALS = {
     return { passed: dc === 'HIGH' || dc === 'MEDIUM', penalty: 15 };
   },
 
+  // Passes when fewer than 3 critical metrics carry the AI's `confidence: 'LOW'` flag.
+  // Note: passes VACUOUSLY when no metrics are present (an empty analysis has 0
+  // LOW metrics, which is < 3). That is semantically correct — the signal is
+  // about poorly-extracted values, not missing ones; missing values are covered
+  // by other signals (live_price, roce_years_of_data_gte_3, etc.).
   critical_metrics_high_confidence: (a) => {
     const pool = {
       ...(a?.gate2a?.metrics    || {}),
