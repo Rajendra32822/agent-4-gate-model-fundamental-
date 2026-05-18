@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import authFetch from '../lib/api';
+import ConfidenceShield from '../components/ConfidenceShield';
 
 const statusColor = s =>
   s === 'PASS' ? 'var(--pass)' : s === 'FAIL' ? 'var(--fail)' : s === 'WARN' ? 'var(--warn)' : 'var(--text-3)';
@@ -367,14 +368,17 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
           </div>
         </div>
         <div className="analysis-hero-right">
-          <span className={`verdict-badge verdict-${analysis.overallVerdict}`} style={{ fontSize: 14, padding: '6px 16px' }}>
-            {analysis.overallVerdict}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <span className={`verdict-badge verdict-${analysis.overallVerdict}`} style={{ fontSize: 14, padding: '6px 16px' }}>
+              {analysis.overallVerdict}
+            </span>
+            <ConfidenceShield confidence={analysis.confidence} size="md" />
+          </div>
           <div className="analysis-entry">
             <div className="analysis-entry-label">Entry zone</div>
             <div className="analysis-entry-value font-mono">{analysis.targetEntryPrice}</div>
           </div>
-          <div style={{ display:'flex', gap:8 }}>
+          <div style={{ display:'flex', gap:8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <button
               className="btn-update"
               onClick={toggleWatchlist}
@@ -386,6 +390,17 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
             {isAdmin && (
               <button className="btn-update" onClick={handleUpdate} disabled={updating}>
                 ↻ Update Analysis
+              </button>
+            )}
+            {isAdmin && analysis.confidence?.band === 'LOW' && (
+              <button
+                className="btn-update"
+                onClick={handleUpdate}
+                disabled={updating}
+                style={{ borderColor: '#ef4444', color: '#ef4444' }}
+                title={`Confidence is LOW (${analysis.confidence.score}/100). Re-runs with fresh data and recomputes the score.`}
+              >
+                ⚠ Re-run (LOW conf.)
               </button>
             )}
           </div>
