@@ -467,6 +467,10 @@ async function saveFundamentalMetrics(analysis) {
       // Entry zone
       entry_zone_low:       null,
       entry_zone_high:      null,
+
+      // Data quality confidence (added 2026-05-17)
+      confidence_score:     analysis.confidence?.score ?? null,
+      confidence_band:      analysis.confidence?.band  ?? null,
     };
 
     // Parse entry zone "₹1,200–1,500" → low=1200, high=1500
