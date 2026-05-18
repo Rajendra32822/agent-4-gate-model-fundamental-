@@ -1,9 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import authFetch from '../lib/api';
 import ConfidenceShield from '../components/ConfidenceShield';
+import VerificationBadge from '../components/VerificationBadge';
 
 const statusColor = s =>
   s === 'PASS' ? 'var(--pass)' : s === 'FAIL' ? 'var(--fail)' : s === 'WARN' ? 'var(--warn)' : 'var(--text-3)';
+
+function MetricRowVerified({ label, value, benchmark, status, verification }) {
+  return (
+    <div className="metric-row">
+      <span className="metric-row-label">
+        {label}
+        <VerificationBadge verification={verification} metricLabel={label} />
+      </span>
+      <span className="metric-row-value font-mono" style={{ color: statusColor(status) }}>{value || '—'}</span>
+      {benchmark && <span className="metric-row-bench">{benchmark}</span>}
+      {status && <span className={`status-pill status-${status}`}>{status}</span>}
+    </div>
+  );
+}
 
 // Extract a numeric price from strings like "₹2,450", "Rs. 2,450", "2450"
 function extractPrice(str) {
@@ -540,17 +555,39 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
       {/* ─── Gate 2a ─── */}
       {gate2a && (
         <GateSection number="Gate 2a" title="Historical Performance — Quantitative" verdict={gate2a.verdict}>
+          {analysis.verifications && (() => {
+            const vs = Object.values(analysis.verifications);
+            const implausible = vs.filter(v => v.verdict === 'IMPLAUSIBLE').length;
+            const unsourced  = vs.filter(v => v.verdict === 'UNSOURCED').length;
+            const stale      = vs.filter(v => v.freshness?.stale).length;
+            const issues     = implausible + unsourced + stale;
+            if (issues === 0) return null;
+            const parts = [];
+            if (implausible) parts.push(`${implausible} IMPLAUSIBLE`);
+            if (unsourced)   parts.push(`${unsourced} UNSOURCED`);
+            if (stale)       parts.push(`${stale} stale`);
+            return (
+              <div style={{
+                background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.3)',
+                borderRadius: 8, padding: '8px 12px', marginBottom: 12,
+                fontSize: 12, color: '#ef4444',
+              }}>
+                ⚠ Verification: {parts.join(' · ')}. Hover any metric badge for details. Re-run for fresh data.
+              </div>
+            );
+          })()}
           {gate2a.metrics && (
             <div>
               <div className="section-label">Key Metrics</div>
               <div className="metrics-table">
                 {Object.entries(gate2a.metrics).map(([k, m]) => (
-                  <MetricRow
+                  <MetricRowVerified
                     key={k}
                     label={formatMetricLabel(k)}
-                    value={m.value}
-                    benchmark={m.benchmark}
-                    status={m.status}
+                    value={m?.value}
+                    benchmark={m?.benchmark}
+                    status={m?.status}
+                    verification={analysis.verifications?.[k]}
                   />
                 ))}
               </div>
@@ -640,7 +677,13 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
               <div className="section-label">Governance Indicators</div>
               <div className="metrics-table">
                 {Object.entries(gate2c.indicators).map(([k, m]) => (
-                  <MetricRow key={k} label={formatMetricLabel(k)} value={m.value} status={m.status} />
+                  <MetricRowVerified
+                    key={k}
+                    label={formatMetricLabel(k)}
+                    value={m?.value}
+                    status={m?.status}
+                    verification={analysis.verifications?.[k]}
+                  />
                 ))}
               </div>
             </div>
@@ -658,15 +701,15 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
               <div className="section-label">Valuation Metrics</div>
               <div className="metrics-table">
                 {Object.entries(gate3.metrics).map(([k, m]) => {
-                  // currentPrice and marketCap are plain strings in the schema; others are {value, benchmark, status} objects
                   const isString = typeof m === 'string' || typeof m === 'number';
                   return (
-                    <MetricRow
+                    <MetricRowVerified
                       key={k}
                       label={formatMetricLabel(k)}
                       value={isString ? m : m?.value}
                       benchmark={isString ? null : m?.benchmark}
                       status={isString ? null : m?.status}
+                      verification={analysis.verifications?.[k]}
                     />
                   );
                 })}
