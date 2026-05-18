@@ -1,7 +1,7 @@
 # ValueSight → OntoAgent Roadmap
 
 **Date:** 2026-05-17
-**Status:** Approved — execution sequence locked
+**Status:** SUPERSEDED by master architecture plan at `2026-05-17-master-architecture-plan.md`. See §10 of that doc for the current authoritative phasing.
 **Inspiration:** McShane, Nirenburg & English, *Agents in the Long Game of AI* (MIT Press, 2024)
 
 ## Vision
