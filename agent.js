@@ -1,6 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { OpenAI } = require('openai');
 const { MARSHALL_SYSTEM_PROMPT } = require('./marshallPrompt');
+const { computeConfidenceScore } = require('./confidence');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -122,7 +123,7 @@ function parseJsonFromText(text) {
  * Fetches financial data for a company using targeted web searches.
  * Each query has a specific instruction to extract the exact data needed.
  */
-async function fetchCompanyData(ticker, companyName) {
+async function fetchCompanyData(ticker, companyName, prependQueries = []) {
   // Use IST (Asia/Kolkata) so "today" is correct from 00:00–05:30 IST when UTC is still yesterday
   const istNow     = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
   const today      = istNow.toISOString().split('T')[0];
@@ -217,8 +218,9 @@ COMPETITIVE POSITION:
   ];
 
   const dataGathered = [];
+  const allSearches = [...prependQueries, ...searches];
 
-  for (const { query, instruction } of searches) {
+  for (const { query, instruction } of allSearches) {
     try {
       const text = await callSearchModel({ userContent: instruction, maxTokens: 2000 });
       if (text.trim()) dataGathered.push({ query, data: text });
@@ -232,13 +234,52 @@ COMPETITIVE POSITION:
 }
 
 /**
+ * Returns extra search queries to prepend on a retry attempt, chosen
+ * based on which confidence signals failed on attempt 1.
+ */
+function buildExpandedQueries(ticker, companyName, failedSignals) {
+  const cy = new Date().getFullYear();
+  const out = [];
+
+  if (failedSignals.has('live_price')) {
+    out.push({
+      query: `site:moneycontrol.com ${ticker} current share price live`,
+      instruction: `Find the LIVE current share price of ${companyName} (${ticker}) on moneycontrol.com or NSE India. Return only the price in ₹ and the timestamp it was last updated.`,
+    });
+  }
+
+  if (failedSignals.has('roce_years_of_data_gte_3')) {
+    out.push({
+      query: `site:screener.in ${ticker} 10 years financials profit loss balance sheet`,
+      instruction: `Extract at least 5 years of financial data for ${companyName} (${ticker}) from screener.in. Return Revenue, EBITDA, PAT, ROCE %, ROE % for each year FY${cy - 5} through FY${cy}.`,
+    });
+  }
+
+  if (failedSignals.has('consolidated_financials')) {
+    out.push({
+      query: `${companyName} consolidated annual report FY${cy} subsidiary structure`,
+      instruction: `Find CONSOLIDATED (not standalone) annual financials for ${companyName}. State the subsidiary structure and confirm whether the latest reported figures include all subsidiaries. Return revenue, profit, ROCE, debt at consolidated level.`,
+    });
+  }
+
+  if (failedSignals.has('live_market_cap')) {
+    out.push({
+      query: `${companyName} ${ticker} market capitalisation today ₹ Cr NSE`,
+      instruction: `Find the current market capitalisation of ${companyName} (${ticker}) in ₹ Cr from NSE India, Bloomberg, or Reuters. Return just the number with the source.`,
+    });
+  }
+
+  return out;
+}
+
+/**
  * Runs the full Marshall 4-gate analysis
  */
-async function runMarshallAnalysis(ticker, companyName, onProgress) {
+async function runMarshallAnalysis(ticker, companyName, onProgress, opts = {}) {
   try {
     onProgress?.({ stage: 'fetching', message: `Fetching financial data for ${companyName}...`, progress: 10 });
 
-    const rawData = await fetchCompanyData(ticker, companyName);
+    const rawData = await fetchCompanyData(ticker, companyName, opts.extraQueries || []);
 
     onProgress?.({ stage: 'analysing', message: "Applying Marshall's 4-gate framework...", progress: 40 });
 
@@ -308,11 +349,39 @@ If Data Source 1 has no price, check all other sources. If genuinely not found, 
 
     // Override AI-extracted price/marketCap with deterministic Yahoo Finance data
     // (AI extraction is unreliable for mid/small caps — Yahoo is the source of truth)
-    onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 92 });
+    onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 90 });
     await enrichWithLiveMarketData(analysisResult);
 
-    onProgress?.({ stage: 'complete', message: 'Analysis complete!', progress: 100 });
+    // Compute data-quality confidence score
+    analysisResult.confidence = computeConfidenceScore(analysisResult);
+    console.log(`📊 Confidence for ${ticker}: ${analysisResult.confidence.score}/100 (${analysisResult.confidence.band})`);
 
+    // Auto-retry once if first attempt produced LOW confidence
+    const attempt = opts.attempt || 1;
+    if (analysisResult.confidence.band === 'LOW' && attempt === 1) {
+      onProgress?.({ stage: 'gates', message: 'Low confidence — retrying with deeper search...', progress: 92 });
+      console.log(`⚠️  Auto-retrying ${ticker} for higher confidence`);
+
+      const failed = new Set(
+        analysisResult.confidence.breakdown.filter(b => !b.passed).map(b => b.signal)
+      );
+      const extraQueries = buildExpandedQueries(ticker, companyName, failed);
+
+      const retry = await runMarshallAnalysis(ticker, companyName, onProgress, {
+        attempt: 2,
+        extraQueries,
+      });
+
+      if (retry?.success && retry.analysis.confidence.score > analysisResult.confidence.score) {
+        retry.analysis.confidence.retryUsed = true;
+        onProgress?.({ stage: 'complete', message: 'Analysis complete (retried)!', progress: 100 });
+        return retry;
+      }
+      analysisResult.confidence.retryUsed = true;
+      analysisResult.confidence.retryNotImproved = true;
+    }
+
+    onProgress?.({ stage: 'complete', message: 'Analysis complete!', progress: 100 });
     return { success: true, analysis: analysisResult };
 
   } catch (error) {
@@ -507,8 +576,12 @@ Instructions:
     analysisResult.previousAnalysisDate = oldAnalysis.analysisDate;
 
     // Enrich quarterly updates with live Yahoo data too
-    onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 92 });
+    onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 90 });
     await enrichWithLiveMarketData(analysisResult);
+
+    // Compute confidence on updated analysis (no auto-retry for updates)
+    analysisResult.confidence = computeConfidenceScore(analysisResult);
+    console.log(`📊 Confidence for ${ticker} update: ${analysisResult.confidence.score}/100 (${analysisResult.confidence.band})`);
 
     onProgress?.({ stage: 'complete', message: 'Update complete!', progress: 100 });
 
