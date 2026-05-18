@@ -519,6 +519,153 @@ async function getAllMetricsLatest() {
   }
 }
 
+// ─── Portfolio transactions (per-user) ────────────────────────────────────────
+
+async function addPortfolioTransaction(userId, tx) {
+  try {
+    const db = getAdminClient();
+    if (!db) return null;
+    const row = {
+      user_id: userId,
+      ticker: tx.ticker?.toUpperCase(),
+      company: tx.company ?? null,
+      type: tx.type,
+      quantity: tx.quantity != null ? Number(tx.quantity) : null,
+      price:    tx.price    != null ? Number(tx.price)    : null,
+      amount:   tx.amount   != null ? Number(tx.amount)   :
+                (tx.quantity != null && tx.price != null
+                  ? Number(tx.quantity) * Number(tx.price)
+                  : null),
+      ratio: tx.ratio ?? null,
+      transaction_date: tx.transaction_date,
+      notes: tx.notes ?? null,
+      source: tx.source || 'manual',
+      status: tx.status || 'confirmed',
+    };
+    const { data, error } = await db.from('portfolio_transactions').insert(row).select().single();
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('addPortfolioTransaction error:', err.message);
+    return null;
+  }
+}
+
+async function listPortfolioTransactions(userId, filters = {}) {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    let q = db.from('portfolio_transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('transaction_date', { ascending: false })
+      .order('id', { ascending: false });
+    if (filters.ticker) q = q.eq('ticker', filters.ticker.toUpperCase());
+    if (filters.type)   q = q.eq('type', filters.type);
+    if (filters.status) q = q.eq('status', filters.status);
+    if (filters.from)   q = q.gte('transaction_date', filters.from);
+    if (filters.to)     q = q.lte('transaction_date', filters.to);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('listPortfolioTransactions error:', err.message);
+    return [];
+  }
+}
+
+async function updatePortfolioTransaction(userId, id, updates) {
+  try {
+    const db = getAdminClient();
+    if (!db) return null;
+    const allowed = ['ticker','company','type','quantity','price','amount','ratio','transaction_date','notes','status'];
+    const row = {};
+    for (const k of allowed) if (k in updates) row[k] = updates[k];
+    const { data, error } = await db.from('portfolio_transactions')
+      .update(row).eq('id', id).eq('user_id', userId).select().single();
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('updatePortfolioTransaction error:', err.message);
+    return null;
+  }
+}
+
+async function deletePortfolioTransaction(userId, id) {
+  try {
+    const db = getAdminClient();
+    if (!db) return false;
+    const { error } = await db.from('portfolio_transactions')
+      .delete().eq('id', id).eq('user_id', userId);
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('deletePortfolioTransaction error:', err.message);
+    return false;
+  }
+}
+
+async function setTransactionStatus(userId, id, status) {
+  try {
+    const db = getAdminClient();
+    if (!db) return false;
+    const { error } = await db.from('portfolio_transactions')
+      .update({ status }).eq('id', id).eq('user_id', userId);
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('setTransactionStatus error:', err.message);
+    return false;
+  }
+}
+
+// ─── Analysis outcomes (shared) ───────────────────────────────────────────────
+
+async function upsertOutcome(record) {
+  try {
+    const db = getAdminClient();
+    if (!db) return false;
+    const { error } = await db.from('analysis_outcomes')
+      .upsert(record, { onConflict: 'ticker,analysis_date' });
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('upsertOutcome error:', err.message);
+    return false;
+  }
+}
+
+async function getAllOutcomes() {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('analysis_outcomes')
+      .select('*')
+      .order('analysis_date', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('getAllOutcomes error:', err.message);
+    return [];
+  }
+}
+
+async function getOutcomesByTicker(ticker) {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('analysis_outcomes')
+      .select('*')
+      .eq('ticker', ticker.toUpperCase())
+      .order('analysis_date', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('getOutcomesByTicker error:', err.message);
+    return [];
+  }
+}
+
 module.exports = {
   connectDB, saveAnalysis, getAnalysis, getAllAnalyses, getAnalysisHistory, deleteAnalysis,
   getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist, getCurrentQuarter,
@@ -529,4 +676,8 @@ module.exports = {
   createAlert, getAlerts, getUnreadAlertCount, markAllAlertsRead,
   // fundamental metrics
   saveFundamentalMetrics, getMetricsHistory, getAllMetricsLatest,
+  // portfolio + outcomes (added 2026-05-17)
+  addPortfolioTransaction, listPortfolioTransactions, updatePortfolioTransaction,
+  deletePortfolioTransaction, setTransactionStatus,
+  upsertOutcome, getAllOutcomes, getOutcomesByTicker,
 };
