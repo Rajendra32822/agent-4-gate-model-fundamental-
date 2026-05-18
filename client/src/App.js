@@ -10,6 +10,7 @@ import NewAnalysis from './pages/NewAnalysis';
 import Profile from './pages/Profile';
 import AdminPanel from './pages/AdminPanel';
 import WatchesPage from './pages/WatchesPage';
+import Portfolio from './pages/Portfolio';
 import authFetch from './lib/api';
 import './styles/global.css';
 
@@ -185,6 +186,9 @@ function AppRouter() {
         {page === 'watches' && (
           <WatchesPage onSelectStock={(ticker) => navigateTo('analysis', ticker)} isAdmin={isAdmin} />
         )}
+        {page === 'portfolio' && (
+          <Portfolio onSelectStock={(ticker) => navigateTo('analysis', ticker)} />
+        )}
         {page === 'profile' && (
           <Profile onSelectStock={(ticker) => navigateTo('analysis', ticker)} />
         )}
@@ -231,6 +235,9 @@ function Header({ page, onNavigate, isAdmin, profile, onSignOut, unreadAlerts, o
                 {unreadAlerts > 9 ? '9+' : unreadAlerts}
               </span>
             )}
+          </button>
+          <button className={`nav-btn ${page === 'portfolio' ? 'active' : ''}`} onClick={() => onNavigate('portfolio')}>
+            Portfolio
           </button>
           <button className={`nav-btn ${page === 'profile' ? 'active' : ''}`} onClick={() => onNavigate('profile')}>
             <span style={{
