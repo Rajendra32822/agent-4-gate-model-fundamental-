@@ -38,12 +38,14 @@ test('priceAtOffset: 30 days later', () => {
 });
 
 test('computeOutcome: full happy path', () => {
+  // Price points at +30/+90/+180/+365 days from analysis date so the
+  // offset lookup finds an exact match for each horizon.
   const s = series([
     ['2026-01-01', 100],
-    ['2026-02-01', 105],
-    ['2026-04-01', 115],
-    ['2026-07-01', 120],
-    ['2027-01-01', 140],
+    ['2026-01-31', 105], // +30d
+    ['2026-04-01', 115], // +90d
+    ['2026-06-30', 120], // +180d
+    ['2027-01-01', 140], // +365d
   ]);
   const out = computeOutcome('X', '2026-01-01', s, {
     entryZone: '₹90–110',
@@ -62,8 +64,8 @@ test('computeOutcome: full happy path', () => {
   assert.equal(out.hit_entry_zone, true);
 });
 
-test('computeOutcome: no data → null returns', () => {
-  const out = computeOutcome('X', '2030-01-01', series([['2026-01-01', 100]]), {});
+test('computeOutcome: empty series → null returns', () => {
+  const out = computeOutcome('X', '2026-01-01', [], {});
   assert.equal(out.price_at_analysis, null);
 });
 
@@ -89,7 +91,8 @@ test('computeOutcome: hit_entry_zone false when price stays above', () => {
 });
 
 test('computeOutcome: handles missing gate3', () => {
-  const s = series([['2026-01-01', 100], ['2026-02-01', 110]]);
+  // +30d exactly so the 1m lookup hits the second price
+  const s = series([['2026-01-01', 100], ['2026-01-31', 110]]);
   const out = computeOutcome('X', '2026-01-01', s, null);
   assert.equal(out.price_at_analysis, 100);
   assert.equal(out.return_1m_pct, 10);
