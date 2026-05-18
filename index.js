@@ -12,6 +12,7 @@ const { verifyAnalysis } = require('./verification');
 const { computeHoldings, computePortfolioSummary } = require('./portfolio');
 const { computeOutcome } = require('./outcomes');
 const { fetchYahooPrice } = require('./priceCheck');
+const { ingestCompany } = require('./ingestion/orchestrator');
 const {
   connectDB, saveAnalysis, getAnalysis,
   getAllAnalyses, getAnalysisHistory, deleteAnalysis,
@@ -24,6 +25,10 @@ const {
   addPortfolioTransaction, listPortfolioTransactions, updatePortfolioTransaction,
   deletePortfolioTransaction, setTransactionStatus,
   upsertOutcome, getAllOutcomes, getOutcomesByTicker,
+  upsertCompany, getCompany,
+  upsertAnnualPl, upsertAnnualBs, upsertAnnualCf, upsertQuarterlyPl,
+  upsertDerivedAnnual, upsertDerivedQuarterly, upsertAggregates,
+  getCompanyBundle,
 } = require('./db');
 
 const app = express();
@@ -561,6 +566,31 @@ app.post('/api/admin/backfill-watches', requireAdmin, async (req, res) => {
       }
     }
     res.json({ success: true, ...results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Phase 5: structured-data endpoints ──────────────────────────────────────
+
+app.get('/api/company/:ticker/financials', requireAuth, async (req, res) => {
+  try {
+    const bundle = await getCompanyBundle(req.params.ticker);
+    if (!bundle) return res.status(404).json({ error: 'No data for ticker' });
+    res.json(bundle);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/ingest/:ticker', requireAdmin, async (req, res) => {
+  try {
+    const dbHelpers = {
+      upsertAnnualPl, upsertAnnualBs, upsertAnnualCf, upsertQuarterlyPl,
+      upsertDerivedAnnual, upsertDerivedQuarterly, upsertAggregates,
+    };
+    const result = await ingestCompany(req.params.ticker, dbHelpers);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
