@@ -116,7 +116,8 @@ test('computeConsensus: HIGH agreement (within 5%)', () => {
 });
 
 test('computeConsensus: MEDIUM agreement (5-15%)', () => {
-  const r = computeConsensus('roce5yr', [18, 20, 17]);
+  // [18, 19, 17.5] → spread 1.5 / mean 18.17 ≈ 8.3% → MEDIUM
+  const r = computeConsensus('roce5yr', [18, 19, 17.5]);
   assert.equal(r.agreementBand, 'MEDIUM');
 });
 
@@ -137,16 +138,17 @@ test('computeConsensus: NOT_FOUND_IN_SOURCES when empty', () => {
 
 // ─── verifyAnalysis end-to-end ───────────────────────────────────────────
 test('verifyAnalysis: VERIFIED for clean metric', () => {
+  // Use FY25 so freshness is within 24-month threshold for 5yr metric
   const analysis = {
     ticker: 'X',
     gate2a: { metrics: { roce5yr: { value: '18%', confidence: 'HIGH' } } },
     gate2c: { indicators: {} },
     gate3:  { metrics: {} },
     citations: {
-      roce5yr: { quote: 'ROCE has averaged 18.2% over FY24', sourceIndex: 1 },
+      roce5yr: { quote: 'ROCE has averaged 18.2% over the last 5 years', sourceIndex: 1 },
     },
   };
-  const rawData = [{ data: 'ROCE was 18% in FY24, 18.2% over 5 years' }];
+  const rawData = [{ data: 'ROCE was 18% recently, 18.2% over 5 years' }];
   const result = verifyAnalysis(analysis, rawData);
   const v = result.verifications.roce5yr;
   assert.equal(v.verdict, 'VERIFIED');
