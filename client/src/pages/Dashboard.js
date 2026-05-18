@@ -173,6 +173,27 @@ export default function Dashboard({ analyses, loading, serverStatus, loadError, 
     return () => { cancelled = true; };
   }, [analyses]);
 
+  // Merge confidence from fundamental_metrics into the analysis summary objects
+  // so filters, stats, sorting, and rendering all see a consistent view —
+  // even for analyses created before the confidence feature shipped.
+  const analysesWithConfidence = useMemo(() => {
+    return analyses.map(a => {
+      if (a.confidence) return a;
+      const m = metricsMap[a.ticker];
+      if (m?.confidence_band && m?.confidence_score != null) {
+        return {
+          ...a,
+          confidence: {
+            score: m.confidence_score,
+            band: m.confidence_band,
+            breakdown: [], // empty — full breakdown only lives on the full analysis JSON
+          },
+        };
+      }
+      return a;
+    });
+  }, [analyses, metricsMap]);
+
   // Smart filter logic
   const passSmartFilter = (a) => {
     if (smartFilter === 'ALL') return true;
@@ -207,7 +228,7 @@ export default function Dashboard({ analyses, loading, serverStatus, loadError, 
 
   // Apply all filters and sort
   const filtered = useMemo(() => {
-    let result = analyses;
+    let result = analysesWithConfidence;
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(a =>
@@ -239,7 +260,7 @@ export default function Dashboard({ analyses, loading, serverStatus, loadError, 
       return sortDir === 'asc' ? av - bv : bv - av;
     });
     return result;
-  }, [analyses, search, verdictFilter, smartFilter, sortKey, sortDir, metricsMap]);
+  }, [analysesWithConfidence, search, verdictFilter, smartFilter, sortKey, sortDir, metricsMap]);
 
   const handleSort = (k) => {
     if (sortKey === k) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -248,24 +269,24 @@ export default function Dashboard({ analyses, loading, serverStatus, loadError, 
 
   // Stats
   const stats = useMemo(() => ({
-    total: analyses.length,
-    buy: analyses.filter(a => a.overallVerdict === 'BUY').length,
-    watch: analyses.filter(a => a.overallVerdict === 'WATCH').length,
-    avoid: analyses.filter(a => a.overallVerdict === 'AVOID').length,
-    undervalued: analyses.filter(a => {
+    total: analysesWithConfidence.length,
+    buy: analysesWithConfidence.filter(a => a.overallVerdict === 'BUY').length,
+    watch: analysesWithConfidence.filter(a => a.overallVerdict === 'WATCH').length,
+    avoid: analysesWithConfidence.filter(a => a.overallVerdict === 'AVOID').length,
+    undervalued: analysesWithConfidence.filter(a => {
       const v = { g1: a.gate1Verdict, g2a: a.gate2aVerdict, g2b: a.gate2bVerdict, g2c: a.gate2cVerdict, g3: a.gate3Verdict };
       return v.g1 === 'PASS' && v.g2a === 'PASS' && v.g2b === 'PASS' && v.g2c === 'PASS' &&
              ['SCREAMING_BUY', 'VALUE_BUY'].includes(v.g3);
     }).length,
-    undervaluedHighConf: analyses.filter(a => {
+    undervaluedHighConf: analysesWithConfidence.filter(a => {
       const v = { g1: a.gate1Verdict, g2a: a.gate2aVerdict, g2b: a.gate2bVerdict, g2c: a.gate2cVerdict, g3: a.gate3Verdict };
       return v.g1 === 'PASS' && v.g2a === 'PASS' && v.g2b === 'PASS' && v.g2c === 'PASS' &&
              ['SCREAMING_BUY', 'VALUE_BUY'].includes(v.g3) &&
              a.confidence?.band === 'HIGH';
     }).length,
-    lowConfidence: analyses.filter(a => a.confidence?.band === 'LOW').length,
-    stale: analyses.filter(a => getDaysOld(a.analysisDate || a.savedAt) >= 90).length,
-  }), [analyses]);
+    lowConfidence: analysesWithConfidence.filter(a => a.confidence?.band === 'LOW').length,
+    stale: analysesWithConfidence.filter(a => getDaysOld(a.analysisDate || a.savedAt) >= 90).length,
+  }), [analysesWithConfidence]);
 
   const exportCSV = () => {
     const headers = ['Ticker','Company','Verdict','ConfidenceBand','ConfidenceScore','G1','G2a','G2b','G2c','G3','CMP','ROCE','P/E','EntryZone','AnalysisDate'];

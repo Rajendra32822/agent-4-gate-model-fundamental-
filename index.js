@@ -116,6 +116,11 @@ app.get('/api/analysis/:ticker', requireAuth, async (req, res) => {
   if (cached) return res.json(cached);
   const stored = await getAnalysis(ticker);
   if (stored) {
+    // Lazy-compute confidence for analyses created before this feature shipped.
+    // Not persisted; run /api/admin/backfill-confidence to make it permanent.
+    if (!stored.confidence) {
+      stored.confidence = computeConfidenceScore(stored);
+    }
     cache.set(`analysis_${ticker}`, stored);
     return res.json(stored);
   }
