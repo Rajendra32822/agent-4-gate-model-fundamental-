@@ -37,11 +37,15 @@ test('perfect analysis scores 100 (HIGH)', () => {
   assert.ok(r.breakdown.every(b => b.passed));
 });
 
-test('empty analysis scores 0 (LOW) with all 8 signals failing', () => {
+test('empty analysis scores 0 (LOW)', () => {
+  // Note: critical_metrics_high_confidence passes vacuously when no metrics exist
+  // (no metrics means 0 LOW counts, which is < 3). All other 7 signals fail.
+  // Total penalty 110 clamps to 100, so score = 0.
   const r = computeConfidenceScore({});
   assert.equal(r.score, 0);
   assert.equal(r.band, 'LOW');
-  assert.ok(r.breakdown.every(b => !b.passed));
+  const failed = r.breakdown.filter(b => !b.passed);
+  assert.equal(failed.length, 7);
 });
 
 test('missing live price subtracts 25', () => {

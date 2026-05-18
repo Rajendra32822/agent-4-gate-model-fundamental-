@@ -1,0 +1,104 @@
+/**
+ * Pure rules-based data-quality confidence scoring.
+ * No I/O, no external calls. Takes an analysis JSON object and returns
+ * { score, band, breakdown, computedAt }.
+ *
+ * Score starts at 100 and subtracts a penalty for each failing signal.
+ * Final score is clamped to [0, 100].
+ *
+ * To add or remove a signal, edit the SIGNALS object below.
+ */
+
+// Critical metric keys whose `confidence: LOW` flags count toward the
+// `critical_metrics_high_confidence` signal.
+const CRITICAL_METRIC_KEYS = [
+  'roce5yr', 'roeLast', 'revenueCAGR5yr', 'patCAGR5yr',
+  'debtEquity', 'promoterPledge', 'ocfQuality', 'promoterHolding',
+];
+
+const SIGNALS = {
+  live_price: (a) => ({
+    passed: a?.liveQuote?.price != null && a.liveQuote.price > 0,
+    penalty: 25,
+  }),
+
+  live_market_cap: (a) => ({
+    passed: a?.liveQuote?.marketCap != null && a.liveQuote.marketCap > 0,
+    penalty: 15,
+  }),
+
+  roce_years_of_data_gte_3: (a) => {
+    const y = a?.gate2a?.metrics?.roce5yr?.yearsOfData;
+    return { passed: typeof y === 'number' && y >= 3, penalty: 20 };
+  },
+
+  consolidated_financials: (a) => ({
+    passed: a?.gate2a?.financialsType === 'CONSOLIDATED',
+    penalty: 15,
+  }),
+
+  gate2a_confidence_high: (a) => {
+    const dc = a?.gate2a?.dataConfidence;
+    return { passed: dc === 'HIGH' || dc === 'MEDIUM', penalty: 15 };
+  },
+
+  critical_metrics_high_confidence: (a) => {
+    const pool = {
+      ...(a?.gate2a?.metrics    || {}),
+      ...(a?.gate2c?.indicators || {}),
+    };
+    const lowCount = CRITICAL_METRIC_KEYS
+      .map(k => pool[k])
+      .filter(m => m && typeof m === 'object' && m.confidence === 'LOW')
+      .length;
+    return { passed: lowCount < 3, penalty: 10 };
+  },
+
+  search_queries_returned: (a) => ({
+    passed: (a?.rawDataSources ?? 0) >= 4,
+    penalty: 10,
+  }),
+
+  data_freshness_18_months: (a) => {
+    if (!a?.analysisDate) return { passed: false, penalty: 10 };
+    const ageMs = Date.now() - new Date(a.analysisDate).getTime();
+    const ageMonths = ageMs / (1000 * 60 * 60 * 24 * 30.44);
+    return { passed: ageMonths <= 18, penalty: 10 };
+  },
+};
+
+function bandForScore(score) {
+  if (score >= 80) return 'HIGH';
+  if (score >= 60) return 'MEDIUM';
+  return 'LOW';
+}
+
+function computeConfidenceScore(analysis) {
+  const breakdown = [];
+  let totalPenalty = 0;
+
+  for (const [name, fn] of Object.entries(SIGNALS)) {
+    const result = fn(analysis);
+    breakdown.push({
+      signal: name,
+      passed: result.passed,
+      penalty: result.passed ? 0 : result.penalty,
+    });
+    if (!result.passed) totalPenalty += result.penalty;
+  }
+
+  const score = Math.max(0, 100 - totalPenalty);
+  return {
+    score,
+    band: bandForScore(score),
+    breakdown,
+    computedAt: new Date().toISOString(),
+  };
+}
+
+module.exports = {
+  computeConfidenceScore,
+  bandForScore,
+  SIGNALS,
+  CRITICAL_METRIC_KEYS,
+};
