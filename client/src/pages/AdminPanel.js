@@ -89,6 +89,28 @@ export default function AdminPanel() {
     }
   };
 
+  // Backfill confidence scores
+  const [confidenceLoading, setConfidenceLoading] = useState(false);
+  const [confidenceResult, setConfidenceResult] = useState(null);
+
+  const handleBackfillConfidence = async () => {
+    setConfidenceLoading(true); setConfidenceResult(null);
+    try {
+      const res = await authFetch('/api/admin/backfill-confidence', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        const b = data.bands || {};
+        setConfidenceResult(`✓ Done — ${data.updated} analyses scored. HIGH: ${b.HIGH || 0} · MEDIUM: ${b.MEDIUM || 0} · LOW: ${b.LOW || 0}`);
+      } else {
+        setConfidenceResult(`⚠ ${data.error}`);
+      }
+    } catch (e) {
+      setConfidenceResult('⚠ ' + e.message);
+    } finally {
+      setConfidenceLoading(false);
+    }
+  };
+
   // Invite section
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
@@ -247,6 +269,27 @@ export default function AdminPanel() {
             {metricsLoading ? 'Saving metrics…' : '↻ Backfill All Metrics'}
           </button>
           {metricsResult && <div style={{ marginTop: 12, fontSize: 13, color: metricsResult.startsWith('✓') ? '#22c55e' : '#f87171' }}>{metricsResult}</div>}
+        </div>
+
+        {/* Backfill Confidence Scores */}
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <div style={styles.cardIcon}>🛡</div>
+            <div>
+              <h2 style={styles.cardTitle}>Backfill Confidence Scores</h2>
+              <p style={styles.cardSubtitle}>
+                Run once to compute a 0–100 data-quality confidence score for every existing analysis. No API calls — just re-scores from saved JSON. New analyses get scored automatically. LOW-confidence analyses can be re-run from the analysis page.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleBackfillConfidence}
+            disabled={confidenceLoading}
+            style={{ background: '#c9a84c', color: '#0d0f11', border: 'none', borderRadius: 8, padding: '10px 22px', fontSize: 14, fontWeight: 700, cursor: confidenceLoading ? 'not-allowed' : 'pointer', opacity: confidenceLoading ? 0.7 : 1, fontFamily: 'inherit' }}
+          >
+            {confidenceLoading ? 'Scoring analyses…' : '🛡 Backfill Confidence Scores'}
+          </button>
+          {confidenceResult && <div style={{ marginTop: 12, fontSize: 13, color: confidenceResult.startsWith('✓') ? '#22c55e' : '#f87171' }}>{confidenceResult}</div>}
         </div>
 
         {/* Invite Section */}
