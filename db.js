@@ -666,6 +666,126 @@ async function getOutcomesByTicker(ticker) {
   }
 }
 
+// ─── Phase 5: structured-data tables (companies, financial periods, derived, aggregates) ──
+
+async function upsertCompany(row) {
+  try {
+    const db = getAdminClient();
+    if (!db) return false;
+    const { error } = await db.from('companies').upsert(
+      { ...row, ticker: row.ticker.toUpperCase(), updated_at: new Date().toISOString() },
+      { onConflict: 'ticker' }
+    );
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('upsertCompany error:', err.message);
+    return false;
+  }
+}
+
+async function getCompany(ticker) {
+  try {
+    const db = getAdminClient();
+    if (!db) return null;
+    const { data, error } = await db.from('companies')
+      .select('*').eq('ticker', ticker.toUpperCase()).single();
+    if (error) return null;
+    return data;
+  } catch (err) {
+    console.error('getCompany error:', err.message);
+    return null;
+  }
+}
+
+async function _upsertRows(table, conflictCols, rows) {
+  try {
+    const db = getAdminClient();
+    if (!db || !rows?.length) return false;
+    const { error } = await db.from(table).upsert(
+      rows.map(r => ({ ...r, ticker: r.ticker.toUpperCase(), fetched_at: new Date().toISOString() })),
+      { onConflict: conflictCols }
+    );
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error(`upsert ${table} error:`, err.message);
+    return false;
+  }
+}
+
+const upsertAnnualPl    = (rows) => _upsertRows('company_annual_pl',    'ticker,fy_end', rows);
+const upsertAnnualBs    = (rows) => _upsertRows('company_annual_bs',    'ticker,fy_end', rows);
+const upsertAnnualCf    = (rows) => _upsertRows('company_annual_cf',    'ticker,fy_end', rows);
+const upsertQuarterlyPl = (rows) => _upsertRows('company_quarterly_pl', 'ticker,q_end',  rows);
+
+async function _upsertComputed(table, conflictCols, rows) {
+  try {
+    const db = getAdminClient();
+    if (!db || !rows?.length) return false;
+    const { error } = await db.from(table).upsert(
+      rows.map(r => ({ ...r, ticker: r.ticker.toUpperCase(), computed_at: new Date().toISOString() })),
+      { onConflict: conflictCols }
+    );
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error(`upsert ${table} error:`, err.message);
+    return false;
+  }
+}
+
+const upsertDerivedAnnual    = (rows) => _upsertComputed('company_derived_annual',    'ticker,fy_end', rows);
+const upsertDerivedQuarterly = (rows) => _upsertComputed('company_derived_quarterly', 'ticker,q_end',  rows);
+
+async function upsertAggregates(row) {
+  try {
+    const db = getAdminClient();
+    if (!db || !row?.ticker) return false;
+    const { error } = await db.from('company_aggregates').upsert(
+      { ...row, ticker: row.ticker.toUpperCase(), computed_at: new Date().toISOString() },
+      { onConflict: 'ticker' }
+    );
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('upsertAggregates error:', err.message);
+    return false;
+  }
+}
+
+async function getCompanyBundle(ticker) {
+  const db = getAdminClient();
+  if (!db) return null;
+  const T = ticker.toUpperCase();
+  try {
+    const [companyRes, plRes, bsRes, cfRes, qRes, dAnnualRes, dQRes, aggRes] = await Promise.all([
+      db.from('companies').select('*').eq('ticker', T).maybeSingle(),
+      db.from('company_annual_pl').select('*').eq('ticker', T).order('fy_end', { ascending: false }),
+      db.from('company_annual_bs').select('*').eq('ticker', T).order('fy_end', { ascending: false }),
+      db.from('company_annual_cf').select('*').eq('ticker', T).order('fy_end', { ascending: false }),
+      db.from('company_quarterly_pl').select('*').eq('ticker', T).order('q_end', { ascending: false }),
+      db.from('company_derived_annual').select('*').eq('ticker', T).order('fy_end', { ascending: false }),
+      db.from('company_derived_quarterly').select('*').eq('ticker', T).order('q_end', { ascending: false }),
+      db.from('company_aggregates').select('*').eq('ticker', T).maybeSingle(),
+    ]);
+    return {
+      ticker: T,
+      company: companyRes.data || null,
+      annual_pl: plRes.data || [],
+      annual_bs: bsRes.data || [],
+      annual_cf: cfRes.data || [],
+      quarterly_pl: qRes.data || [],
+      derived_annual: dAnnualRes.data || [],
+      derived_quarterly: dQRes.data || [],
+      aggregates: aggRes.data || null,
+    };
+  } catch (err) {
+    console.error('getCompanyBundle error:', err.message);
+    return null;
+  }
+}
+
 module.exports = {
   connectDB, saveAnalysis, getAnalysis, getAllAnalyses, getAnalysisHistory, deleteAnalysis,
   getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist, getCurrentQuarter,
@@ -680,4 +800,9 @@ module.exports = {
   addPortfolioTransaction, listPortfolioTransactions, updatePortfolioTransaction,
   deletePortfolioTransaction, setTransactionStatus,
   upsertOutcome, getAllOutcomes, getOutcomesByTicker,
+  // Phase 5: structured data layer
+  upsertCompany, getCompany,
+  upsertAnnualPl, upsertAnnualBs, upsertAnnualCf, upsertQuarterlyPl,
+  upsertDerivedAnnual, upsertDerivedQuarterly, upsertAggregates,
+  getCompanyBundle,
 };
