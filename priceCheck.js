@@ -103,6 +103,36 @@ async function fetchYahooQuote(ticker) {
   throw new Error(`No Yahoo data for ${ticker} on NSE or BSE`);
 }
 
+/**
+ * Fetch corporate-action events (splits + dividends) for a ticker from Yahoo.
+ * Returns: { splits: [{ date, ratio }], dividends: [{ date, amount }] }
+ * Empty arrays on failure (no throw — corporate actions are advisory).
+ */
+async function fetchYahooCorporateActions(ticker, rangeDays = 365) {
+  for (const ex of ['NS', 'BO']) {
+    const symbol = toYahooSymbol(ticker, ex);
+    try {
+      const range = `${Math.max(1, Math.round(rangeDays / 365))}y`;
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=${range}&events=div,split`;
+      const { status, json } = await httpsGetJson(url);
+      if (status !== 200) continue;
+      const events = json?.chart?.result?.[0]?.events || {};
+      const splits = Object.values(events.splits || {}).map(s => ({
+        date: new Date(s.date * 1000).toISOString().split('T')[0],
+        ratio: `${s.numerator}:${s.denominator}`,
+      }));
+      const dividends = Object.values(events.dividends || {}).map(d => ({
+        date: new Date(d.date * 1000).toISOString().split('T')[0],
+        amount: d.amount,
+      }));
+      if (splits.length > 0 || dividends.length > 0) {
+        return { splits, dividends };
+      }
+    } catch { /* try next exchange */ }
+  }
+  return { splits: [], dividends: [] };
+}
+
 // Format helpers for converting raw numbers into the display strings
 // the analysis schema expects (e.g. "₹1,23,456 Cr").
 function formatInrPrice(n) {
@@ -226,6 +256,6 @@ async function runDailyPriceCheck(db) {
 }
 
 module.exports = {
-  fetchYahooPrice, fetchYahooQuote, formatInrPrice, formatInrCrore,
+  fetchYahooPrice, fetchYahooQuote, fetchYahooCorporateActions, formatInrPrice, formatInrCrore,
   extractWatchFromAnalysis, runDailyPriceCheck, parseEntryZone, parsePrice,
 };
