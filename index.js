@@ -8,6 +8,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { runMarshallAnalysis, runUpdateAnalysis, lookupCompany } = require('./agent');
 const { extractWatchFromAnalysis, runDailyPriceCheck } = require('./priceCheck');
 const { computeConfidenceScore } = require('./confidence');
+const { verifyAnalysis } = require('./verification');
 const {
   connectDB, saveAnalysis, getAnalysis,
   getAllAnalyses, getAnalysisHistory, deleteAnalysis,
@@ -487,6 +488,10 @@ app.post('/api/admin/backfill-confidence', requireAdmin, async (req, res) => {
       try {
         const full = await getAnalysis(row.ticker);
         if (!full) continue;
+        // Run sanity verification on saved values (no API calls). Older analyses
+        // won't have citations or rawData, so consensus/freshness/citation will
+        // be empty — but sanity still works on saved numbers.
+        verifyAnalysis(full, []);
         const confidence = computeConfidenceScore(full);
         full.confidence = confidence;
         await saveAnalysis(full);
