@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import authFetch from '../lib/api';
 import ConfidenceShield from '../components/ConfidenceShield';
 import VerificationBadge from '../components/VerificationBadge';
+import FinancialsGrid from '../components/FinancialsGrid';
 
 const statusColor = s =>
   s === 'PASS' ? 'var(--pass)' : s === 'FAIL' ? 'var(--fail)' : s === 'WARN' ? 'var(--warn)' : 'var(--text-3)';
@@ -595,6 +596,11 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
           )}
           <IndiaFlags flags={gate2a.indiaFlags} />
           <Narrative text={gate2a.narrative} />
+
+          <div style={{ marginTop: 16 }}>
+            <div className="section-label">Structured Financials (auto-expanding)</div>
+            <FinancialsGrid ticker={ticker} />
+          </div>
         </GateSection>
       )}
 
