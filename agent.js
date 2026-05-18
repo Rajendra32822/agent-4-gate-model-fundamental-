@@ -327,6 +327,26 @@ MANDATORY — Gate 3 fields that MUST be populated from the search data above:
 - gate3.metrics.priceBook: OBJECT { "value": "3.5x", "benchmark": "≤3×", "status": "PASS|FAIL|WARN" } — use P/B from Data Source 1
 - gate3.metrics.dividendYield: OBJECT { "value": "1.2%", "status": "INFO" } — use dividend yield from Data Source 1
 If Data Source 1 has no price, check all other sources. If genuinely not found, set value to "N/A — not found in search data" but keep the object shape — do NOT invent a number and do NOT change the field type.
+
+MANDATORY — Source citations (anti-hallucination guard):
+Include a top-level "citations" object in your JSON output that maps each critical metric key
+to an object {"quote": "...", "sourceIndex": N}. The quote must be a verbatim snippet (≤ 200 chars)
+copied from one of the numbered Data Sources above that supports the number you extracted.
+sourceIndex is which Data Source (1-5) the quote came from.
+
+Required citation keys (provide all that you populated; omit only if the metric is truly missing):
+  roce5yr, roeLast, revenueCAGR5yr, patCAGR5yr, debtEquity, promoterPledge, ocfQuality,
+  promoterHolding, currentPrice, marketCap, peRatio, priceBook
+
+Do NOT fabricate citation quotes. If no source genuinely supports a value, omit that citation
+entry — a missing citation will be flagged by the verification layer as UNSOURCED, which is
+acceptable. Fabricating citations is far worse than admitting unsourced values.
+
+Example:
+"citations": {
+  "roce5yr":      { "quote": "ROCE averaged 18.2% over the last 5 years", "sourceIndex": 2 },
+  "currentPrice": { "quote": "Current price: ₹2,450 (as of today)", "sourceIndex": 1 }
+}
 `;
 
     onProgress?.({ stage: 'gates', message: 'AI is analysing all gates...', progress: 65 });
