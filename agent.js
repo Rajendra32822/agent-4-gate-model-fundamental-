@@ -3,6 +3,7 @@ const { OpenAI } = require('openai');
 const { MARSHALL_SYSTEM_PROMPT } = require('./marshallPrompt');
 const { computeConfidenceScore } = require('./confidence');
 const { verifyAnalysis } = require('./verification');
+const { getCompanyBundle } = require('./db');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -419,11 +420,71 @@ function buildExpandedQueries(ticker, companyName, failedSignals) {
 }
 
 /**
+ * Builds a compact, Marshall-relevant structured data block from a company bundle.
+ * Returns null if no data found — caller falls back to the existing AI-extraction path.
+ */
+function buildStructuredDataContext(bundle) {
+  if (!bundle) return null;
+  const a = bundle.aggregates || {};
+  const lastAnnualPl = (bundle.annual_pl || [])[0];
+  const lastDerived  = (bundle.derived_annual || [])[0];
+  const lastQuarter  = (bundle.quarterly_pl || [])[0];
+  if (!lastAnnualPl) return null;
+
+  const annual = (bundle.annual_pl || []).slice(0, 5).map(r => ({
+    fy: r.fy_label,
+    sales_cr: r.sales_cr, op_profit_cr: r.operating_profit_cr,
+    net_profit_cr: r.net_profit_cr, eps: r.eps_rs,
+  }));
+  const quarters = (bundle.quarterly_pl || []).slice(0, 5).map(r => ({
+    q: r.q_label,
+    sales_cr: r.sales_cr, op_profit_cr: r.operating_profit_cr,
+    net_profit_cr: r.net_profit_cr,
+  }));
+
+  return [
+    '=== AUTHORITATIVE STRUCTURED FINANCIAL DATA (source: screener.in consolidated) ===',
+    `Latest annual: ${lastAnnualPl.fy_label} (period ending ${lastAnnualPl.fy_end})`,
+    `Latest quarter: ${lastQuarter?.q_label || 'n/a'}`,
+    '',
+    'KEY AGGREGATES:',
+    `  ROCE 5y avg: ${a.roce_5y_avg ?? 'n/a'}%`,
+    `  ROE 5y avg:  ${a.roe_5y_avg ?? 'n/a'}%`,
+    `  Revenue CAGR 5y: ${a.revenue_cagr_5y_pct ?? 'n/a'}%`,
+    `  PAT CAGR 5y:     ${a.pat_cagr_5y_pct ?? 'n/a'}%`,
+    `  EBITDA margin 5y avg: ${a.ebitda_margin_5y_avg ?? 'n/a'}%`,
+    `  PAT margin 5y avg:    ${a.pat_margin_5y_avg ?? 'n/a'}%`,
+    '',
+    'LATEST FY DERIVED METRICS:',
+    `  ROCE: ${lastDerived?.roce_pct ?? 'n/a'}%`,
+    `  ROE:  ${lastDerived?.roe_pct ?? 'n/a'}%`,
+    `  Debt/Equity: ${lastDerived?.debt_to_equity ?? 'n/a'}`,
+    `  Interest coverage: ${lastDerived?.interest_coverage ?? 'n/a'}×`,
+    `  OCF/PAT: ${lastDerived?.ocf_to_pat_pct ?? 'n/a'}%`,
+    `  FCF margin: ${lastDerived?.fcf_margin_pct ?? 'n/a'}%`,
+    '',
+    'ANNUAL P&L (₹ Cr):',
+    JSON.stringify(annual, null, 2),
+    '',
+    'QUARTERLY P&L (₹ Cr):',
+    JSON.stringify(quarters, null, 2),
+    '=== END STRUCTURED DATA — TREAT AS PRIMARY SOURCE OF TRUTH FOR NUMBERS ===',
+  ].join('\n');
+}
+
+/**
  * Runs the full Marshall 4-gate analysis
  */
 async function runMarshallAnalysis(ticker, companyName, onProgress, opts = {}) {
   try {
     onProgress?.({ stage: 'fetching', message: `Fetching financial data for ${companyName}...`, progress: 10 });
+
+    // Phase 5: prefer structured data when available
+    const bundle = await getCompanyBundle(ticker).catch(() => null);
+    const structuredContext = buildStructuredDataContext(bundle);
+    if (structuredContext) {
+      console.log(`📚 Using structured data for ${ticker} (${bundle.annual_pl.length} annual, ${bundle.quarterly_pl.length} quarters)`);
+    }
 
     const rawData = await fetchCompanyData(ticker, companyName, opts.extraQueries || []);
 
@@ -442,7 +503,7 @@ Analyse ${companyName} (${ticker}, listed on NSE/BSE India) using Marshall's com
 
 Financial and business data gathered:
 
-${dataContext}
+${structuredContext ? structuredContext + '\n\n' : ''}${dataContext}
 
 Today's date: ${new Date().toISOString().split('T')[0]}
 
