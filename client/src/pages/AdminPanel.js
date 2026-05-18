@@ -276,9 +276,9 @@ export default function AdminPanel() {
           <div style={styles.cardHeader}>
             <div style={styles.cardIcon}>🛡</div>
             <div>
-              <h2 style={styles.cardTitle}>Backfill Confidence Scores</h2>
+              <h2 style={styles.cardTitle}>Backfill Verification + Confidence</h2>
               <p style={styles.cardSubtitle}>
-                Run once to compute a 0–100 data-quality confidence score for every existing analysis. No API calls — just re-scores from saved JSON. New analyses get scored automatically. LOW-confidence analyses can be re-run from the analysis page.
+                Run once to compute sanity verification (plausibility checks) and confidence scores for every existing analysis. No API calls — just re-scores from saved JSON. Older analyses won't have full citation/consensus data but will get sanity-checked. New analyses get verified automatically with all checks.
               </p>
             </div>
           </div>
@@ -287,7 +287,7 @@ export default function AdminPanel() {
             disabled={confidenceLoading}
             style={{ background: '#c9a84c', color: '#0d0f11', border: 'none', borderRadius: 8, padding: '10px 22px', fontSize: 14, fontWeight: 700, cursor: confidenceLoading ? 'not-allowed' : 'pointer', opacity: confidenceLoading ? 0.7 : 1, fontFamily: 'inherit' }}
           >
-            {confidenceLoading ? 'Scoring analyses…' : '🛡 Backfill Confidence Scores'}
+            {confidenceLoading ? 'Verifying analyses…' : '🛡 Backfill Verification + Confidence'}
           </button>
           {confidenceResult && <div style={{ marginTop: 12, fontSize: 13, color: confidenceResult.startsWith('✓') ? '#22c55e' : '#f87171' }}>{confidenceResult}</div>}
         </div>
