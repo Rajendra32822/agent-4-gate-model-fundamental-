@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import authFetch from '../lib/api';
+import ConfidenceShield from '../components/ConfidenceShield';
 
 const VERDICT_ICONS = { BUY: '▲', WATCH: '◉', AVOID: '▼' };
 const GATE_KEYS = ['gate1', 'gate2a', 'gate2b', 'gate2c', 'gate3'];
@@ -95,6 +96,7 @@ function StockTable({ rows, metricsMap, sortKey, sortDir, onSort, onSelect, onUp
             <th className="th-sort" onClick={() => onSort('ticker')}>Ticker{arrow('ticker')}</th>
             <th className="th-sort" onClick={() => onSort('company')}>Company{arrow('company')}</th>
             <th className="th-sort" onClick={() => onSort('verdict')}>Verdict{arrow('verdict')}</th>
+            <th className="th-sort" onClick={() => onSort('confidence')}>Conf{arrow('confidence')}</th>
             <th>G1</th>
             <th>G2a</th>
             <th>G2b</th>
@@ -119,6 +121,7 @@ function StockTable({ rows, metricsMap, sortKey, sortDir, onSort, onSelect, onUp
                 <td className="td-ticker font-mono">{a.ticker}</td>
                 <td className="td-company">{a.company}</td>
                 <td><span className={`verdict-badge verdict-${verdict}`}>{VERDICT_ICONS[verdict]} {verdict}</span></td>
+                <td><ConfidenceShield confidence={a.confidence} size="sm" /></td>
                 {GATE_KEYS.map(k => (
                   <td key={k} className="td-gate"><GateIndicator verdict={a[`${k}Verdict`] || a[k]?.verdict} /></td>
                 ))}
@@ -191,6 +194,13 @@ export default function Dashboard({ analyses, loading, serverStatus, loadError, 
       return verdicts.g1 === 'PASS' && verdicts.g2a === 'PASS' &&
              verdicts.g2b === 'PASS' && verdicts.g2c === 'PASS';
     }
+    if (smartFilter === 'UNDERVALUED_HIGH_CONF') {
+      const qualityOk = verdicts.g1 === 'PASS' && verdicts.g2a === 'PASS' &&
+                        verdicts.g2b === 'PASS' && verdicts.g2c === 'PASS' &&
+                        ['SCREAMING_BUY', 'VALUE_BUY'].includes(verdicts.g3);
+      return qualityOk && a.confidence?.band === 'HIGH';
+    }
+    if (smartFilter === 'LOW_CONFIDENCE') return a.confidence?.band === 'LOW';
     if (smartFilter === 'STALE') return getDaysOld(a.analysisDate || a.savedAt) >= 90;
     return true;
   };
@@ -218,6 +228,7 @@ export default function Dashboard({ analyses, loading, serverStatus, loadError, 
         case 'ticker':  av = a.ticker || ''; bv = b.ticker || ''; break;
         case 'company': av = a.company || ''; bv = b.company || ''; break;
         case 'verdict': av = verdictRank[a.overallVerdict] ?? 9; bv = verdictRank[b.overallVerdict] ?? 9; break;
+        case 'confidence': av = a.confidence?.score ?? -1; bv = b.confidence?.score ?? -1; break;
         case 'cmp':     av = m(a.ticker).current_price ?? -1; bv = m(b.ticker).current_price ?? -1; break;
         case 'roce':    av = m(a.ticker).roce_pct ?? -999; bv = m(b.ticker).roce_pct ?? -999; break;
         case 'pe':      av = m(a.ticker).pe_ratio ?? 99999; bv = m(b.ticker).pe_ratio ?? 99999; break;
@@ -246,16 +257,24 @@ export default function Dashboard({ analyses, loading, serverStatus, loadError, 
       return v.g1 === 'PASS' && v.g2a === 'PASS' && v.g2b === 'PASS' && v.g2c === 'PASS' &&
              ['SCREAMING_BUY', 'VALUE_BUY'].includes(v.g3);
     }).length,
+    undervaluedHighConf: analyses.filter(a => {
+      const v = { g1: a.gate1Verdict, g2a: a.gate2aVerdict, g2b: a.gate2bVerdict, g2c: a.gate2cVerdict, g3: a.gate3Verdict };
+      return v.g1 === 'PASS' && v.g2a === 'PASS' && v.g2b === 'PASS' && v.g2c === 'PASS' &&
+             ['SCREAMING_BUY', 'VALUE_BUY'].includes(v.g3) &&
+             a.confidence?.band === 'HIGH';
+    }).length,
+    lowConfidence: analyses.filter(a => a.confidence?.band === 'LOW').length,
     stale: analyses.filter(a => getDaysOld(a.analysisDate || a.savedAt) >= 90).length,
   }), [analyses]);
 
   const exportCSV = () => {
-    const headers = ['Ticker','Company','Verdict','G1','G2a','G2b','G2c','G3','CMP','ROCE','P/E','EntryZone','AnalysisDate'];
+    const headers = ['Ticker','Company','Verdict','ConfidenceBand','ConfidenceScore','G1','G2a','G2b','G2c','G3','CMP','ROCE','P/E','EntryZone','AnalysisDate'];
     const lines = [headers.join(',')];
     filtered.forEach(a => {
       const m = metricsMap[a.ticker] || {};
       lines.push([
         a.ticker, `"${(a.company || '').replace(/"/g, '""')}"`, a.overallVerdict,
+        a.confidence?.band ?? '', a.confidence?.score ?? '',
         a.gate1Verdict || '', a.gate2aVerdict || '', a.gate2bVerdict || '', a.gate2cVerdict || '', a.gate3Verdict || '',
         m.current_price ?? '', m.roce_pct ?? '', m.pe_ratio ?? '',
         `"${(a.targetEntryPrice || '').replace(/"/g, '""')}"`, a.analysisDate || ''
@@ -341,6 +360,14 @@ export default function Dashboard({ analyses, loading, serverStatus, loadError, 
               <span className="stat-num">{stats.undervalued}</span>
               <span className="stat-lbl">★ Undervalued</span>
             </button>
+            <button className={`stat-chip stat-undervalued ${smartFilter === 'UNDERVALUED_HIGH_CONF' ? 'active' : ''}`} title="Undervalued AND high data-quality confidence" onClick={() => { setSmart(s => s === 'UNDERVALUED_HIGH_CONF' ? 'ALL' : 'UNDERVALUED_HIGH_CONF'); setVerdict('ALL'); }}>
+              <span className="stat-num">{stats.undervaluedHighConf}</span>
+              <span className="stat-lbl">★ High-Conf Buys</span>
+            </button>
+            <button className={`stat-chip stat-avoid ${smartFilter === 'LOW_CONFIDENCE' ? 'active' : ''}`} title="Analyses with LOW data quality — consider re-running" onClick={() => { setSmart(s => s === 'LOW_CONFIDENCE' ? 'ALL' : 'LOW_CONFIDENCE'); setVerdict('ALL'); }}>
+              <span className="stat-num">{stats.lowConfidence}</span>
+              <span className="stat-lbl">⚠ Low Conf</span>
+            </button>
             <button className={`stat-chip stat-stale ${smartFilter === 'STALE' ? 'active' : ''}`} onClick={() => { setSmart(s => s === 'STALE' ? 'ALL' : 'STALE'); setVerdict('ALL'); }}>
               <span className="stat-num">{stats.stale}</span>
               <span className="stat-lbl">Stale (90d+)</span>
@@ -358,7 +385,9 @@ export default function Dashboard({ analyses, loading, serverStatus, loadError, 
             <select className="controls-select" value={smartFilter} onChange={e => { setSmart(e.target.value); setVerdict('ALL'); }}>
               <option value="ALL">Smart filter: All</option>
               <option value="UNDERVALUED">★ Undervalued (Marshall criteria)</option>
+              <option value="UNDERVALUED_HIGH_CONF">★ Undervalued + HIGH confidence only</option>
               <option value="QUALITY">Quality only (gates 1+2 PASS)</option>
+              <option value="LOW_CONFIDENCE">Low confidence (need re-run)</option>
               <option value="STALE">Stale (need refresh)</option>
             </select>
             <div className="view-toggle">
