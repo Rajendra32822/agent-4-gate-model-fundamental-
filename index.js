@@ -9,6 +9,9 @@ const { runMarshallAnalysis, runUpdateAnalysis, lookupCompany } = require('./age
 const { extractWatchFromAnalysis, runDailyPriceCheck } = require('./priceCheck');
 const { computeConfidenceScore } = require('./confidence');
 const { verifyAnalysis } = require('./verification');
+const { computeHoldings, computePortfolioSummary } = require('./portfolio');
+const { computeOutcome } = require('./outcomes');
+const { fetchYahooPrice } = require('./priceCheck');
 const {
   connectDB, saveAnalysis, getAnalysis,
   getAllAnalyses, getAnalysisHistory, deleteAnalysis,
@@ -18,6 +21,9 @@ const {
   openVirtualTrade, closeVirtualTrade, updateOpenTrades, getAllTrades,
   createAlert, getAlerts, getUnreadAlertCount, markAllAlertsRead,
   saveFundamentalMetrics, getMetricsHistory, getAllMetricsLatest,
+  addPortfolioTransaction, listPortfolioTransactions, updatePortfolioTransaction,
+  deletePortfolioTransaction, setTransactionStatus,
+  upsertOutcome, getAllOutcomes, getOutcomesByTicker,
 } = require('./db');
 
 const app = express();
@@ -436,6 +442,87 @@ app.post('/api/alerts/mark-read', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── Portfolio endpoints (per-user) ───────────────────────────────────────────
+app.get('/api/portfolio/transactions', requireAuth, async (req, res) => {
+  try {
+    const txs = await listPortfolioTransactions(req.user.id, {
+      ticker: req.query.ticker,
+      type:   req.query.type,
+      status: req.query.status,
+      from:   req.query.from,
+      to:     req.query.to,
+    });
+    res.json(txs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/portfolio/transactions', requireAuth, async (req, res) => {
+  const tx = req.body || {};
+  if (!tx.ticker || !tx.type || !tx.transaction_date) {
+    return res.status(400).json({ error: 'ticker, type and transaction_date are required' });
+  }
+  const allowedTypes = ['BUY','SELL','DIVIDEND','SPLIT','BONUS'];
+  if (!allowedTypes.includes(tx.type)) {
+    return res.status(400).json({ error: `type must be one of ${allowedTypes.join(', ')}` });
+  }
+  const saved = await addPortfolioTransaction(req.user.id, tx);
+  if (!saved) return res.status(500).json({ error: 'Failed to save transaction' });
+  res.json(saved);
+});
+
+app.put('/api/portfolio/transactions/:id', requireAuth, async (req, res) => {
+  const updated = await updatePortfolioTransaction(req.user.id, req.params.id, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'Transaction not found' });
+  res.json(updated);
+});
+
+app.delete('/api/portfolio/transactions/:id', requireAuth, async (req, res) => {
+  const ok = await deletePortfolioTransaction(req.user.id, req.params.id);
+  if (!ok) return res.status(404).json({ error: 'Transaction not found' });
+  res.json({ success: true });
+});
+
+app.post('/api/portfolio/transactions/:id/confirm', requireAuth, async (req, res) => {
+  const ok = await setTransactionStatus(req.user.id, req.params.id, 'confirmed');
+  if (!ok) return res.status(404).json({ error: 'Transaction not found' });
+  res.json({ success: true });
+});
+
+app.post('/api/portfolio/transactions/:id/dismiss', requireAuth, async (req, res) => {
+  const ok = await setTransactionStatus(req.user.id, req.params.id, 'dismissed');
+  if (!ok) return res.status(404).json({ error: 'Transaction not found' });
+  res.json({ success: true });
+});
+
+app.get('/api/portfolio/holdings', requireAuth, async (req, res) => {
+  try {
+    const txs = await listPortfolioTransactions(req.user.id, { status: 'confirmed' });
+    const tickers = [...new Set(txs.map(t => t.ticker))];
+    const cmpMap = {};
+    await Promise.all(tickers.map(async (t) => {
+      try { cmpMap[t] = await fetchYahooPrice(t); } catch { cmpMap[t] = 0; }
+    }));
+    const holdings = computeHoldings(txs, cmpMap);
+    const summary  = computePortfolioSummary(txs, cmpMap);
+    res.json({ holdings, summary });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Outcomes endpoints (shared data) ─────────────────────────────────────────
+app.get('/api/outcomes', requireAuth, async (req, res) => {
+  try { res.json(await getAllOutcomes()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/outcomes/:ticker', requireAuth, async (req, res) => {
+  try { res.json(await getOutcomesByTicker(req.params.ticker)); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── Daily price check cron (call from cron-job.org at 4:30pm IST) ────────────
 app.post('/api/cron/price-check', async (req, res) => {
   const secret = req.headers['x-cron-secret'];
@@ -469,6 +556,62 @@ app.post('/api/admin/backfill-watches', requireAdmin, async (req, res) => {
         if (!watch.ticker) { results.skipped++; continue; }
         await upsertWatch(watch);
         results.created++;
+      } catch (e) {
+        results.errors.push({ ticker: row.ticker, error: e.message });
+      }
+    }
+    res.json({ success: true, ...results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Admin: backfill analysis outcomes (historical returns) ──────────────────
+app.post('/api/admin/backfill-outcomes', requireAdmin, async (req, res) => {
+  try {
+    const https = require('https');
+    const analyses = await getAllAnalyses();
+    const results = { computed: 0, skipped: 0, errors: [] };
+
+    const chartCache = {};
+    const fetchChart5y = (ticker) => new Promise((resolve, reject) => {
+      if (chartCache[ticker]) return resolve(chartCache[ticker]);
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker.toUpperCase()}.NS?interval=1d&range=5y`;
+      https.get(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+        timeout: 15000,
+      }, (rs) => {
+        let data = '';
+        rs.on('data', c => data += c);
+        rs.on('end', () => {
+          try {
+            const j = JSON.parse(data);
+            const r = j?.chart?.result?.[0];
+            const ts = r?.timestamp || [];
+            const closes = r?.indicators?.quote?.[0]?.close || [];
+            const seriesArr = ts.map((t, i) => ({
+              date: new Date(t * 1000).toISOString().split('T')[0],
+              close: closes[i],
+            })).filter(p => p.close != null);
+            chartCache[ticker] = seriesArr;
+            resolve(seriesArr);
+          } catch (e) { reject(e); }
+        });
+      }).on('error', reject).on('timeout', function() { this.destroy(); reject(new Error('timeout')); });
+    });
+
+    for (const row of analyses) {
+      try {
+        const full = await getAnalysis(row.ticker);
+        if (!full) { results.skipped++; continue; }
+        const seriesArr = await fetchChart5y(full.ticker);
+        const out = computeOutcome(full.ticker, full.analysisDate, seriesArr, full.gate3);
+        const er = (full.gate3?.entryZone || '').replace(/[₹,\s]/g, '').match(/(\d+(?:\.\d+)?)[–\-](\d+(?:\.\d+)?)/);
+        out.verdict    = full.overallVerdict || null;
+        out.entry_low  = er ? parseFloat(er[1]) : null;
+        out.entry_high = er ? parseFloat(er[2]) : null;
+        const saved = await upsertOutcome(out);
+        if (saved) results.computed++;
       } catch (e) {
         results.errors.push({ ticker: row.ticker, error: e.message });
       }
