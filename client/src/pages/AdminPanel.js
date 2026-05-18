@@ -111,6 +111,27 @@ export default function AdminPanel() {
     }
   };
 
+  // Backfill analysis outcomes
+  const [outcomesLoading, setOutcomesLoading] = useState(false);
+  const [outcomesResult,  setOutcomesResult]  = useState(null);
+
+  const handleBackfillOutcomes = async () => {
+    setOutcomesLoading(true); setOutcomesResult(null);
+    try {
+      const res = await authFetch('/api/admin/backfill-outcomes', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setOutcomesResult(`✓ Done — ${data.computed} outcomes computed, ${data.skipped} skipped${data.errors?.length ? `, ${data.errors.length} errors` : ''}.`);
+      } else {
+        setOutcomesResult(`⚠ ${data.error}`);
+      }
+    } catch (e) {
+      setOutcomesResult('⚠ ' + e.message);
+    } finally {
+      setOutcomesLoading(false);
+    }
+  };
+
   // Invite section
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
@@ -290,6 +311,27 @@ export default function AdminPanel() {
             {confidenceLoading ? 'Verifying analyses…' : '🛡 Backfill Verification + Confidence'}
           </button>
           {confidenceResult && <div style={{ marginTop: 12, fontSize: 13, color: confidenceResult.startsWith('✓') ? '#22c55e' : '#f87171' }}>{confidenceResult}</div>}
+        </div>
+
+        {/* Backfill Analysis Outcomes */}
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <div style={styles.cardIcon}>📈</div>
+            <div>
+              <h2 style={styles.cardTitle}>Backfill Analysis Outcomes</h2>
+              <p style={styles.cardSubtitle}>
+                Run once to compute historical 1m/3m/6m/1y returns for every saved analysis. Powers the Framework Performance tab on the Portfolio page. Uses Yahoo Finance historical data — one call per ticker.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleBackfillOutcomes}
+            disabled={outcomesLoading}
+            style={{ background: '#10b981', color: '#0d0f11', border: 'none', borderRadius: 8, padding: '10px 22px', fontSize: 14, fontWeight: 700, cursor: outcomesLoading ? 'not-allowed' : 'pointer', opacity: outcomesLoading ? 0.7 : 1, fontFamily: 'inherit' }}
+          >
+            {outcomesLoading ? 'Computing outcomes…' : '📈 Backfill Analysis Outcomes'}
+          </button>
+          {outcomesResult && <div style={{ marginTop: 12, fontSize: 13, color: outcomesResult.startsWith('✓') ? '#22c55e' : '#f87171' }}>{outcomesResult}</div>}
         </div>
 
         {/* Invite Section */}
