@@ -70,6 +70,45 @@ const SIGNALS = {
     const ageMonths = ageMs / (1000 * 60 * 60 * 24 * 30.44);
     return { passed: ageMonths <= 18, penalty: 10 };
   },
+
+  // ─── Verification-derived signals (added 2026-05-17 with verification layer) ──
+
+  // ≥ 80% of critical metrics with a value have a citation (i.e. verdict !== 'UNSOURCED').
+  // Vacuous-pass when verifications field is entirely absent (older analyses).
+  metrics_have_citations: (a) => {
+    const v = a?.verifications;
+    if (!v) return { passed: true, penalty: 10 };
+    const total = Object.keys(v).length;
+    if (total === 0) return { passed: true, penalty: 10 };
+    const cited = Object.values(v).filter(x => x.verdict !== 'UNSOURCED').length;
+    return { passed: (cited / total) >= 0.8, penalty: 10 };
+  },
+
+  // No critical metric is IMPLAUSIBLE.
+  // Vacuous-pass when verifications field is entirely absent.
+  metrics_pass_sanity: (a) => {
+    const v = a?.verifications;
+    if (!v) return { passed: true, penalty: 15 };
+    const anyImplausible = Object.values(v).some(x => x.verdict === 'IMPLAUSIBLE');
+    return { passed: !anyImplausible, penalty: 15 };
+  },
+
+  // ≥ 50% of metrics with consensus data show HIGH/MEDIUM agreement.
+  // Vacuous-pass when verifications absent or none have consensus data.
+  cross_source_consensus: (a) => {
+    const v = a?.verifications;
+    if (!v) return { passed: true, penalty: 10 };
+    const withConsensus = Object.values(v).filter(x =>
+      x.consensus &&
+      x.consensus.agreementBand !== 'NOT_FOUND_IN_SOURCES' &&
+      x.consensus.agreementBand !== 'SINGLE_SOURCE'
+    );
+    if (withConsensus.length === 0) return { passed: true, penalty: 10 };
+    const good = withConsensus.filter(x =>
+      x.consensus.agreementBand === 'HIGH' || x.consensus.agreementBand === 'MEDIUM'
+    ).length;
+    return { passed: (good / withConsensus.length) >= 0.5, penalty: 10 };
+  },
 };
 
 function bandForScore(score) {

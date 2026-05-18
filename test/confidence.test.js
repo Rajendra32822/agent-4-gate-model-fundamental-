@@ -33,7 +33,8 @@ test('perfect analysis scores 100 (HIGH)', () => {
   const r = computeConfidenceScore(perfectAnalysis);
   assert.equal(r.score, 100);
   assert.equal(r.band, 'HIGH');
-  assert.equal(r.breakdown.length, 8);
+  // 8 base signals + 3 verification signals (added 2026-05-17)
+  assert.equal(r.breakdown.length, 11);
   assert.ok(r.breakdown.every(b => b.passed));
 });
 
@@ -134,4 +135,70 @@ test('breakdown contains penalty=0 for passing signals', () => {
 test('computedAt is an ISO timestamp', () => {
   const r = computeConfidenceScore({});
   assert.match(r.computedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+});
+
+// ─── Verification-derived signals ──────────────────────────────────────────
+
+test('metrics_have_citations passes when ≥80% have citation', () => {
+  const a = JSON.parse(JSON.stringify(perfectAnalysis));
+  a.verifications = {
+    roce5yr:    { verdict: 'VERIFIED' },
+    roeLast:    { verdict: 'VERIFIED' },
+    debtEquity: { verdict: 'VERIFIED' },
+    promoterPledge: { verdict: 'VERIFIED' },
+    currentPrice:   { verdict: 'UNSOURCED' },
+  };
+  const r = computeConfidenceScore(a);
+  assert.equal(r.score, 100);
+});
+
+test('metrics_have_citations fails when < 80% have citation', () => {
+  const a = JSON.parse(JSON.stringify(perfectAnalysis));
+  a.verifications = {
+    roce5yr:    { verdict: 'UNSOURCED' },
+    roeLast:    { verdict: 'UNSOURCED' },
+    debtEquity: { verdict: 'VERIFIED' },
+  };
+  const r = computeConfidenceScore(a);
+  assert.equal(r.score, 90);
+});
+
+test('metrics_pass_sanity fails when any IMPLAUSIBLE', () => {
+  const a = JSON.parse(JSON.stringify(perfectAnalysis));
+  a.verifications = {
+    roce5yr: { verdict: 'IMPLAUSIBLE' },
+  };
+  const r = computeConfidenceScore(a);
+  // citations: 1/1 cited (IMPLAUSIBLE is not UNSOURCED) → passes
+  // sanity: any IMPLAUSIBLE → fails -15
+  // consensus: no consensus data → vacuous pass
+  // Result: 100 - 15 = 85
+  assert.equal(r.score, 85);
+});
+
+test('cross_source_consensus passes vacuously when no consensus data', () => {
+  const a = JSON.parse(JSON.stringify(perfectAnalysis));
+  a.verifications = {
+    roce5yr: { verdict: 'VERIFIED', consensus: { agreementBand: 'NOT_FOUND_IN_SOURCES' } },
+  };
+  const r = computeConfidenceScore(a);
+  assert.equal(r.score, 100);
+});
+
+test('cross_source_consensus fails when most LOW agreement', () => {
+  const a = JSON.parse(JSON.stringify(perfectAnalysis));
+  a.verifications = {
+    roce5yr: { verdict: 'VERIFIED', consensus: { agreementBand: 'LOW' } },
+    roeLast: { verdict: 'VERIFIED', consensus: { agreementBand: 'LOW' } },
+  };
+  const r = computeConfidenceScore(a);
+  assert.equal(r.score, 90);
+});
+
+test('verification signals vacuous-pass when no verifications field (old analyses)', () => {
+  // Older analyses without the verifications block should NOT be penalised.
+  // All 3 verification signals pass vacuously, so score stays at 100.
+  const a = JSON.parse(JSON.stringify(perfectAnalysis));
+  const r = computeConfidenceScore(a);
+  assert.equal(r.score, 100);
 });
