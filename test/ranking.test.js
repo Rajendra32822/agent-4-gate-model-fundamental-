@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { scoreRow, rankUniverse, STRATEGY_LIST } = require('../ranking');
+const ontology = require('../ontology');
 
 const row = (o) => ({
   ticker: 'X', company_name: 'X Co', sector: 'IT',
@@ -92,4 +93,12 @@ test('rankUniverse excludes failing rows', () => {
 
 test('unknown strategy returns empty ranking', () => {
   assert.deepEqual(rankUniverse('nonsense', [row()]), []);
+});
+
+test('marshall_undervalued ROCE gate uses the ontology benchmark', () => {
+  const min = ontology.benchmark('roce'); // 15
+  const justUnder = { roce_5y_avg: min - 0.1, debt_to_equity: 0.2, pat_cagr_5y_pct: 10, pe: 20, revenue_cagr_5y_pct: 12 };
+  const justOver  = { roce_5y_avg: min + 0.1, debt_to_equity: 0.2, pat_cagr_5y_pct: 10, pe: 20, revenue_cagr_5y_pct: 12 };
+  assert.equal(scoreRow('marshall_undervalued', justUnder).passes, false);
+  assert.equal(scoreRow('marshall_undervalued', justOver).passes, true);
 });

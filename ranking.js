@@ -12,6 +12,8 @@
  * Global benchmarks for v1; Phase 7 microtheories will make them sector-aware.
  */
 
+const ontology = require('./ontology');
+
 const num = (v) => (v == null || !isFinite(v)) ? null : Number(v);
 
 const STRATEGIES = {
@@ -23,7 +25,8 @@ const STRATEGIES = {
       const patCagr = num(r.pat_cagr_5y_pct), pe = num(r.pe);
       const revCagr = num(r.revenue_cagr_5y_pct) ?? 0;
       const reasons = [];
-      if (roce == null || roce < 15) return fail('ROCE 5y < 15%');
+      const roceMin = ontology.benchmark('roce');
+      if (roce == null || roce < roceMin) return fail(`ROCE 5y < ${roceMin}%`);
       if (de == null || de > 0.5)    return fail('Debt/Equity > 0.5');
       if (patCagr == null || patCagr <= 0) return fail('PAT not growing');
       if (pe == null || pe <= 0 || pe > 35) return fail('P/E out of range (0-35]');
@@ -36,7 +39,8 @@ const STRATEGIES = {
     description: 'Highest return-on-capital businesses with strong growth and low debt — regardless of price.',
     score(r) {
       const roce = num(r.roce_5y_avg);
-      if (roce == null || roce < 15) return fail('ROCE 5y < 15%');
+      const roceMin = ontology.benchmark('roce');
+      if (roce == null || roce < roceMin) return fail(`ROCE 5y < ${roceMin}%`);
       const revCagr = num(r.revenue_cagr_5y_pct) ?? 0;
       const patCagr = num(r.pat_cagr_5y_pct) ?? 0;
       const de = num(r.debt_to_equity) ?? 0;
