@@ -203,6 +203,27 @@ app.post('/api/analyse', requireAdmin, analysisLimiter, async (req, res) => {
 
   try {
     sendProgress({ stage: 'starting', message: `Starting ${deepAnalysis ? 'deep' : 'standard'} analysis for ${companyName}...`, progress: 5 });
+
+    // Standard (free) analysis relies on structured data + Yahoo (it skips web search).
+    // If this ticker was never ingested, pull it from screener.in on demand (free scraper)
+    // so the free model has real financials to work with.
+    if (!deepAnalysis) {
+      const existing = await getCompanyBundle(ticker).catch(() => null);
+      const hasData = !!(existing && Array.isArray(existing.annual_pl) && existing.annual_pl.length > 0);
+      if (!hasData) {
+        sendProgress({ stage: 'ingesting', message: `Fetching ${ticker} fundamentals from screener.in...`, progress: 8 });
+        try {
+          await ingestCompany(ticker, INGEST_DB_HELPERS);
+        } catch (e) {
+          return sendError(`Couldn't fetch data for ${ticker} from screener.in — try Deep Analysis. (${e.message})`);
+        }
+        const after = await getCompanyBundle(ticker).catch(() => null);
+        if (!after || !Array.isArray(after.annual_pl) || after.annual_pl.length === 0) {
+          return sendError(`No structured data available for ${ticker} after ingestion — try Deep Analysis.`);
+        }
+      }
+    }
+
     const result = await runMarshallAnalysis(ticker, companyName, sendProgress, { deepAnalysis: !!deepAnalysis });
     if (result.success) {
       await saveAnalysis(result.analysis);
