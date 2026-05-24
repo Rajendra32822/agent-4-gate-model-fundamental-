@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-05-25-free-ai-default-routing-design.md`
 
+> **⚠️ Status note (added during execution):** Tasks 1–3 of this plan turned out to be **already implemented** in commit `4825bbb` (which landed externally mid-session) — `callAnalysisModel` branching, `deepAnalysis` threading, and web-search/Tier-2/auto-retry gating are all done in the current code, with the routing logic inlined rather than via a `resolveAnalysisPlan` helper. Only **Task 4's ingest-on-demand** was a real gap; it was implemented in commit `e5cfb0c`. The `resolveAnalysisPlan` refactor (Task 1) was deliberately skipped. Treat Tasks 1–3 below as historical/superseded.
+
 > **Note on test command:** the local Node is **v24.11.0**. Use `node --test test/*.test.js` (glob). `node --test test/` errors with "Cannot find module .../test" on Node 24.
 
 ---

@@ -1,7 +1,7 @@
 # Free AI by Default — Analysis Routing
 
 **Date:** 2026-05-25
-**Status:** Approved (awaiting written-spec review)
+**Status:** ✅ Implemented. The bulk of this design (callAnalysisModel branching, deepAnalysis threading through runMarshallAnalysis/runUpdateAnalysis, web-search/Tier-2/auto-retry gating, route flag + key guards, free model default) was already implemented in commit `4825bbb`. The remaining gap — **ingest-on-demand** (§4.5) — was added in commit `e5cfb0c`. The `resolveAnalysisPlan` helper (§4.7) was intentionally **not** built (the routing logic is inlined in `callAnalysisModel`; adding the helper would churn working code for no behavior change).
 **Type:** Bug fix / behavior change (implements strategic decision Q4)
 **Related:** Q4 ("Free OpenRouter by default; Anthropic only on user-flagged 'Deep Analysis'"), Tier model (Tier A/B free, Tier C deep). Phase 5 structured data layer (relied on here).
 
