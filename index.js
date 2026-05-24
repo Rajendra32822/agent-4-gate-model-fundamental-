@@ -13,6 +13,9 @@ const { computeHoldings, computePortfolioSummary } = require('./portfolio');
 const { computeOutcome } = require('./outcomes');
 const { fetchYahooPrice } = require('./priceCheck');
 const { ingestCompany } = require('./ingestion/orchestrator');
+const { runBulkIngestion, getBulkState } = require('./ingestion/bulkRunner');
+const fsPromises = require('fs').promises;
+const pathMod = require('path');
 const {
   connectDB, saveAnalysis, getAnalysis,
   getAllAnalyses, getAnalysisHistory, deleteAnalysis,
@@ -29,7 +32,16 @@ const {
   upsertAnnualPl, upsertAnnualBs, upsertAnnualCf, upsertQuarterlyPl,
   upsertDerivedAnnual, upsertDerivedQuarterly, upsertAggregates,
   getCompanyBundle,
+  upsertShareholding, seedCompanies, listCompanies, getStaleCompanies,
+  markIngested, updateCompany, deleteCompany, renameTickerCascade, getCoverage,
 } = require('./db');
+
+// Shared db-helpers bundle passed to the ingestion orchestrator/bulk runner
+const INGEST_DB_HELPERS = {
+  upsertAnnualPl, upsertAnnualBs, upsertAnnualCf, upsertQuarterlyPl,
+  upsertDerivedAnnual, upsertDerivedQuarterly, upsertAggregates,
+  upsertShareholding, markIngested,
+};
 
 const app = express();
 const cache = new NodeCache({ stdTTL: 3600 });
@@ -585,15 +597,137 @@ app.get('/api/company/:ticker/financials', requireAuth, async (req, res) => {
 
 app.post('/api/admin/ingest/:ticker', requireAdmin, async (req, res) => {
   try {
-    const dbHelpers = {
-      upsertAnnualPl, upsertAnnualBs, upsertAnnualCf, upsertQuarterlyPl,
-      upsertDerivedAnnual, upsertDerivedQuarterly, upsertAggregates,
-    };
-    const result = await ingestCompany(req.params.ticker, dbHelpers);
+    const result = await ingestCompany(req.params.ticker, INGEST_DB_HELPERS);
+    if (markIngested) {
+      const ok = !result.errors || result.errors.length === 0;
+      await markIngested(req.params.ticker, ok ? 'ok' : 'failed',
+        ok ? null : JSON.stringify(result.errors).slice(0, 500));
+    }
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── Phase 5.2: universe master CRUD ─────────────────────────────────────────
+
+app.post('/api/admin/universe/load-nifty500', requireAdmin, async (req, res) => {
+  try {
+    const csvPath = pathMod.join(__dirname, 'data', 'nifty500.csv');
+    const text = await fsPromises.readFile(csvPath, 'utf8');
+    const lines = text.split(/\r?\n/).slice(1).filter(Boolean); // skip header
+    const rows = [];
+    for (const line of lines) {
+      // CSV: Company Name,Industry,Symbol  (company names may contain commas → split from the right)
+      const lastComma = line.lastIndexOf(',');
+      const firstComma = line.indexOf(',');
+      if (lastComma === -1 || firstComma === lastComma) continue;
+      const company_name = line.slice(0, firstComma).trim();
+      const sector       = line.slice(firstComma + 1, lastComma).trim();
+      const symbol       = line.slice(lastComma + 1).trim();
+      if (!symbol || /^DUMMY/i.test(symbol)) continue; // skip dummy rows
+      rows.push({ ticker: symbol, company_name, sector });
+    }
+    const result = await seedCompanies(rows);
+    res.json({ success: true, parsed: rows.length, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/universe/seed', requireAdmin, async (req, res) => {
+  try {
+    const raw = req.body?.tickers || '';
+    const tickers = raw.split(/[\s,]+/).map(t => t.trim().toUpperCase()).filter(Boolean);
+    if (!tickers.length) return res.status(400).json({ error: 'No tickers provided' });
+    const result = await seedCompanies(tickers.map(t => ({ ticker: t })));
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/universe', requireAdmin, async (req, res) => {
+  try { res.json(await listCompanies()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/admin/universe/company', requireAdmin, async (req, res) => {
+  const { ticker, company_name, sector } = req.body || {};
+  if (!ticker) return res.status(400).json({ error: 'ticker required' });
+  const result = await seedCompanies([{ ticker, company_name, sector }]);
+  res.json({ success: true, ...result });
+});
+
+app.put('/api/admin/universe/company/:ticker', requireAdmin, async (req, res) => {
+  const updated = await updateCompany(req.params.ticker, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'Company not found' });
+  res.json(updated);
+});
+
+app.delete('/api/admin/universe/company/:ticker', requireAdmin, async (req, res) => {
+  const ok = await deleteCompany(req.params.ticker, req.query.hard === 'true');
+  if (!ok) return res.status(404).json({ error: 'Company not found' });
+  res.json({ success: true });
+});
+
+app.post('/api/admin/universe/company/:ticker/rename', requireAdmin, async (req, res) => {
+  const newTicker = req.body?.newTicker;
+  if (!newTicker) return res.status(400).json({ error: 'newTicker required' });
+  const result = await renameTickerCascade(req.params.ticker, newTicker);
+  res.json(result);
+});
+
+// ─── Phase 5.2: bulk ingestion + coverage ────────────────────────────────────
+
+app.post('/api/admin/ingest/bulk', requireAdmin, async (req, res) => {
+  if (getBulkState().running) {
+    return res.status(409).json({ error: 'A bulk run is already in progress', state: getBulkState() });
+  }
+  let tickers = req.body?.tickers;
+  if (!Array.isArray(tickers) || tickers.length === 0) {
+    // default: all stale, capped
+    const limit = Number(req.body?.limit) || 50;
+    tickers = await getStaleCompanies(limit);
+  } else {
+    tickers = tickers.map(t => String(t).toUpperCase());
+  }
+  // fire-and-forget: start in background, respond immediately
+  runBulkIngestion(tickers, INGEST_DB_HELPERS).catch(e => console.error('bulk run error:', e.message));
+  res.json({ started: true, count: tickers.length });
+});
+
+app.get('/api/admin/ingest/status', requireAdmin, async (req, res) => {
+  res.json(getBulkState());
+});
+
+app.get('/api/admin/coverage', requireAdmin, async (req, res) => {
+  try {
+    const coverage = await getCoverage();
+    const summary = {
+      total: coverage.length,
+      ok: coverage.filter(c => c.ingest_status === 'ok').length,
+      failed: coverage.filter(c => c.ingest_status === 'failed').length,
+      pending: coverage.filter(c => c.ingest_status === 'pending' || !c.ingest_status).length,
+    };
+    res.json({ summary, coverage });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/cron/ingest-universe', async (req, res) => {
+  const secret = req.headers['x-cron-secret'];
+  if (!secret || secret !== process.env.CRON_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  if (getBulkState().running) {
+    return res.json({ skipped: true, reason: 'already running' });
+  }
+  const batch = Number(process.env.INGEST_BATCH_SIZE) || 50;
+  const tickers = await getStaleCompanies(batch);
+  runBulkIngestion(tickers, INGEST_DB_HELPERS).catch(e => console.error('cron bulk error:', e.message));
+  res.json({ started: true, batch: tickers.length });
 });
 
 // ─── Admin: backfill analysis outcomes (historical returns) ──────────────────
