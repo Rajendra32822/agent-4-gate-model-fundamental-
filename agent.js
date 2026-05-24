@@ -4,6 +4,7 @@ const { MARSHALL_SYSTEM_PROMPT } = require('./marshallPrompt');
 const { computeConfidenceScore } = require('./confidence');
 const { verifyAnalysis } = require('./verification');
 const { getCompanyBundle } = require('./db');
+const ontology = require('./ontology');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -465,20 +466,20 @@ function buildStructuredDataContext(bundle) {
     `Latest quarter: ${lastQuarter?.q_label || 'n/a'}`,
     '',
     'KEY AGGREGATES:',
-    `  ROCE 5y avg: ${a.roce_5y_avg ?? 'n/a'}%`,
-    `  ROE 5y avg:  ${a.roe_5y_avg ?? 'n/a'}%`,
-    `  Revenue CAGR 5y: ${a.revenue_cagr_5y_pct ?? 'n/a'}%`,
-    `  PAT CAGR 5y:     ${a.pat_cagr_5y_pct ?? 'n/a'}%`,
-    `  EBITDA margin 5y avg: ${a.ebitda_margin_5y_avg ?? 'n/a'}%`,
-    `  PAT margin 5y avg:    ${a.pat_margin_5y_avg ?? 'n/a'}%`,
+    `  ${ontology.get('roce').label} (5y avg): ${ontology.format('roce', a.roce_5y_avg)}`,
+    `  ${ontology.get('roe').label} (5y avg): ${ontology.format('roe', a.roe_5y_avg)}`,
+    `  ${ontology.get('revenue_cagr_5y').label}: ${ontology.format('revenue_cagr_5y', a.revenue_cagr_5y_pct)}`,
+    `  ${ontology.get('pat_cagr_5y').label}: ${ontology.format('pat_cagr_5y', a.pat_cagr_5y_pct)}`,
+    `  ${ontology.get('ebitda_margin').label} (5y avg): ${ontology.format('ebitda_margin', a.ebitda_margin_5y_avg)}`,
+    `  ${ontology.get('pat_margin').label} (5y avg): ${ontology.format('pat_margin', a.pat_margin_5y_avg)}`,
     '',
     'LATEST FY DERIVED METRICS:',
-    `  ROCE: ${lastDerived?.roce_pct ?? 'n/a'}%`,
-    `  ROE:  ${lastDerived?.roe_pct ?? 'n/a'}%`,
-    `  Debt/Equity: ${lastDerived?.debt_to_equity ?? 'n/a'}`,
-    `  Interest coverage: ${lastDerived?.interest_coverage ?? 'n/a'}×`,
-    `  OCF/PAT: ${lastDerived?.ocf_to_pat_pct ?? 'n/a'}%`,
-    `  FCF margin: ${lastDerived?.fcf_margin_pct ?? 'n/a'}%`,
+    `  ${ontology.get('roce').label}: ${ontology.format('roce', lastDerived?.roce_pct)}`,
+    `  ${ontology.get('roe').label}: ${ontology.format('roe', lastDerived?.roe_pct)}`,
+    `  ${ontology.get('debt_to_equity').label}: ${ontology.format('debt_to_equity', lastDerived?.debt_to_equity)}`,
+    `  ${ontology.get('interest_coverage').label}: ${ontology.format('interest_coverage', lastDerived?.interest_coverage)}`,
+    `  ${ontology.get('ocf_to_pat').label}: ${ontology.format('ocf_to_pat', lastDerived?.ocf_to_pat_pct)}`,
+    `  ${ontology.get('fcf_margin').label}: ${ontology.format('fcf_margin', lastDerived?.fcf_margin_pct)}`,
     '',
     'ANNUAL P&L (₹ Cr):',
     JSON.stringify(annual, null, 2),
