@@ -5,7 +5,7 @@ const path = require('path');
 const NodeCache = require('node-cache');
 const rateLimit = require('express-rate-limit');
 const { createClient } = require('@supabase/supabase-js');
-const { runMarshallAnalysis, runUpdateAnalysis, lookupCompany } = require('./agent');
+const { runMarshallAnalysis, runUpdateAnalysis, lookupCompany, matchCompanyInUniverse } = require('./agent');
 const { extractWatchFromAnalysis, runDailyPriceCheck } = require('./priceCheck');
 const { computeConfidenceScore } = require('./confidence');
 const { verifyAnalysis } = require('./verification');
@@ -107,6 +107,24 @@ app.get('/api/health', (req, res) => {
 app.get('/api/lookup', requireAuth, async (req, res) => {
   const { q } = req.query;
   if (!q) return res.status(400).json({ error: 'Query parameter q is required' });
+
+  // Local-first: resolve from the universe master (free, instant, no AI).
+  try {
+    const match = matchCompanyInUniverse(await listCompanies(), q);
+    if (match) {
+      return res.json({
+        ticker: match.ticker,
+        name: match.company_name || match.ticker,
+        exchange: 'NSE',
+        sector: match.sector || null,
+        source: 'universe',
+      });
+    }
+  } catch (e) {
+    console.error('Local lookup failed, falling back to AI:', e.message);
+  }
+
+  // Fallback: free-model AI lookup (no paid web search).
   const result = await lookupCompany(q);
   res.json(result);
 });
