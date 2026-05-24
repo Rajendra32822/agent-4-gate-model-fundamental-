@@ -44,6 +44,45 @@ function shouldUseFallback(err) {
   return false;
 }
 
+// ── Valuation consistency guard (defense-in-depth) ──────────────────────────
+// Parse a price like "₹7,500" or "2,317.9" → number (first numeric token, unsigned).
+function parsePriceNumber(str) {
+  if (str == null) return null;
+  const m = String(str).replace(/[,₹\s]/g, '').match(/\d+(?:\.\d+)?/);
+  return m ? parseFloat(m[0]) : null;
+}
+
+// Midpoint of an entry-zone string ("₹7,500–8,500" → 8000) or a single value.
+// Dashes are range separators here, never negative signs.
+function parseEntryZoneMidpoint(str) {
+  if (str == null) return null;
+  const cleaned = String(str).replace(/[,₹\s]/g, '').replace(/[–—-]/g, ' ');
+  const nums = (cleaned.match(/\d+(?:\.\d+)?/g) || []).map(parseFloat);
+  if (nums.length === 0) return null;
+  if (nums.length === 1) return nums[0];
+  return (nums[0] + nums[1]) / 2;
+}
+
+// Are the AI's valuation prices in the same ballpark as the live current price?
+// Flags unreliable if any candidate is >3x or <0.33x the current price — the
+// signature of a valuation produced without a current-price anchor.
+function checkValuationConsistency(currentPrice, candidatePrices) {
+  if (currentPrice == null || !isFinite(currentPrice) || currentPrice <= 0) {
+    return { reliable: true, reason: 'no live price to check against' };
+  }
+  for (const p of candidatePrices || []) {
+    if (p == null || !isFinite(p) || p <= 0) continue;
+    const ratio = p / currentPrice;
+    if (ratio > 3 || ratio < 0.33) {
+      return {
+        reliable: false,
+        reason: `valuation price ₹${Math.round(p)} is ${ratio.toFixed(1)}× the live current price ₹${Math.round(currentPrice)} — likely produced without a price anchor`,
+      };
+    }
+  }
+  return { reliable: true, reason: 'within range' };
+}
+
 /**
  * Calls the analysis model.
  * Standard (default): free OpenRouter model only — zero Anthropic credits consumed.
@@ -898,4 +937,4 @@ Instructions:
   }
 }
 
-module.exports = { runMarshallAnalysis, runUpdateAnalysis, lookupCompany, matchCompanyInUniverse };
+module.exports = { runMarshallAnalysis, runUpdateAnalysis, lookupCompany, matchCompanyInUniverse, parsePriceNumber, parseEntryZoneMidpoint, checkValuationConsistency };
