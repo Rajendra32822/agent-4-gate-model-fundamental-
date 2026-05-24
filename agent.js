@@ -744,13 +744,18 @@ function matchCompanyInUniverse(companies, query) {
  */
 async function lookupCompany(query) {
   try {
-    const text = await callSearchModel({
-      userContent: `Find the NSE ticker symbol and full company name for: "${query}" (Indian stock market).
+    if (!openRouterClient) return { error: 'Lookup unavailable — OPENROUTER_API_KEY not configured.' };
+    const response = await openRouterClient.chat.completions.create({
+      model: FREE_MODEL,
+      max_tokens: 300,
+      messages: [{
+        role: 'user',
+        content: `Find the NSE ticker symbol and full company name for: "${query}" (Indian stock market).
         Return ONLY a JSON object: {"ticker": "SYMBOL", "name": "Full Company Name", "exchange": "NSE", "sector": "sector name"}
         If not found return: {"error": "Company not found"}`,
-      maxTokens: 300,
+      }],
     });
-
+    const text = response.choices?.[0]?.message?.content || '';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) return JSON.parse(jsonMatch[0]);
     return { error: 'Could not identify company' };
