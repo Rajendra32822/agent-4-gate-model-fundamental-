@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import authFetch from '../lib/api';
+import CoveragePanel from '../components/CoveragePanel';
 
 const ADMIN_EMAIL = 'rajendra.amil@gmail.com';
 
@@ -278,6 +279,8 @@ export default function AdminPanel() {
             Invite new members and manage existing accounts.
           </p>
         </div>
+
+        <CoveragePanel />
 
         {/* Backfill Watches */}
         <div style={styles.card}>
