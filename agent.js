@@ -16,12 +16,12 @@ const openRouterClient = process.env.OPENROUTER_API_KEY
     })
   : null;
 
-// Analysis fallback: strong reasoning model (~$0.002 per analysis)
-const FALLBACK_MODEL = process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it';
-// Search fallback: Perplexity Sonar — real-time web search (~$0.015 per analysis)
-// If you have no OpenRouter credits, set OPENROUTER_SEARCH_MODEL=google/gemma-4-26b-a4b-it:free
-// but note that free models have no live web access so prices/market data will be stale
-const FALLBACK_SEARCH_MODEL = process.env.OPENROUTER_SEARCH_MODEL || 'perplexity/sonar';
+// Standard analysis: free OpenRouter model (no Anthropic credits consumed)
+const FREE_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct:free';
+// Deep analysis fallback: paid model used only when Anthropic fails mid-deep-analysis
+const DEEP_FALLBACK_MODEL = process.env.OPENROUTER_DEEP_MODEL || 'google/gemma-4-31b-it';
+// Deep analysis search: Perplexity Sonar has live web access (~$0.015/analysis, deep only)
+const SEARCH_MODEL = process.env.OPENROUTER_SEARCH_MODEL || 'perplexity/sonar';
 
 // Returns true for any error where switching to OpenRouter makes sense:
 // credits exhausted, network failures, timeouts, or Anthropic being unreachable
@@ -44,10 +44,30 @@ function shouldUseFallback(err) {
 }
 
 /**
- * Calls the main analysis model (Sonnet).
- * On credit exhaustion, automatically retries via OpenRouter using the configured fallback model.
+ * Calls the analysis model.
+ * Standard (default): free OpenRouter model only — zero Anthropic credits consumed.
+ * Deep analysis: Anthropic Sonnet first, falls back to paid OpenRouter model on failure.
  */
-async function callAnalysisModel({ system, userContent, maxTokens = 16000, onFallback }) {
+async function callAnalysisModel({ system, userContent, maxTokens = 8192, onFallback, deepAnalysis = false }) {
+  if (!deepAnalysis) {
+    if (!openRouterClient) throw new Error('OPENROUTER_API_KEY not configured. Standard analysis requires OpenRouter.');
+    console.log(`🤖 Standard analysis via free model (${FREE_MODEL})`);
+    const response = await openRouterClient.chat.completions.create({
+      model: FREE_MODEL,
+      max_tokens: Math.min(maxTokens, 8192),
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: userContent },
+      ],
+    });
+    const choice = response.choices?.[0];
+    if (choice?.finish_reason === 'length') {
+      throw new Error(`Free model output truncated at 8192 tokens. Consider triggering Deep Analysis for this stock.`);
+    }
+    return choice?.message?.content || '';
+  }
+
+  // Deep analysis: Anthropic Sonnet first, paid OpenRouter fallback
   try {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-5',
@@ -58,13 +78,11 @@ async function callAnalysisModel({ system, userContent, maxTokens = 16000, onFal
     return response.content.filter(b => b.type === 'text').map(b => b.text).join('');
   } catch (err) {
     if (!openRouterClient || !shouldUseFallback(err)) throw err;
-
-    console.warn(`⚠️  Anthropic credits exhausted — switching to OpenRouter (${FALLBACK_MODEL})`);
+    console.warn(`⚠️  Anthropic unavailable for deep analysis — switching to ${DEEP_FALLBACK_MODEL}`);
     onFallback?.();
-
     const response = await openRouterClient.chat.completions.create({
-      model: FALLBACK_MODEL,
-      max_tokens: Math.min(maxTokens, 8192), // most OpenRouter models cap at 8192
+      model: DEEP_FALLBACK_MODEL,
+      max_tokens: Math.min(maxTokens, 8192),
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: userContent },
@@ -72,8 +90,7 @@ async function callAnalysisModel({ system, userContent, maxTokens = 16000, onFal
     });
     const choice = response.choices?.[0];
     if (choice?.finish_reason === 'length') {
-      // Output truncated — JSON will be invalid; surface a clear error instead of a parse failure
-      throw new Error(`Fallback model ${FALLBACK_MODEL} truncated output at ${Math.min(maxTokens, 8192)} tokens. Try a model with a larger output window (e.g. openai/gpt-4o-mini, anthropic/claude-haiku).`);
+      throw new Error(`Fallback model ${DEEP_FALLBACK_MODEL} truncated output. Try again.`);
     }
     return choice?.message?.content || '';
   }
@@ -96,10 +113,10 @@ async function callSearchModel({ userContent, maxTokens = 1500 }) {
   } catch (err) {
     if (!openRouterClient || !shouldUseFallback(err)) throw err;
 
-    console.warn(`⚠️  Anthropic unavailable for search — switching to ${FALLBACK_SEARCH_MODEL}`);
+    console.warn(`⚠️  Anthropic unavailable for search — switching to ${SEARCH_MODEL}`);
 
     const response = await openRouterClient.chat.completions.create({
-      model: FALLBACK_SEARCH_MODEL,
+      model: SEARCH_MODEL,
       max_tokens: maxTokens,
       messages: [{ role: 'user', content: userContent }],
     });
@@ -476,6 +493,7 @@ function buildStructuredDataContext(bundle) {
  * Runs the full Marshall 4-gate analysis
  */
 async function runMarshallAnalysis(ticker, companyName, onProgress, opts = {}) {
+  const isDeep = opts.deepAnalysis === true;
   try {
     onProgress?.({ stage: 'fetching', message: `Fetching financial data for ${companyName}...`, progress: 10 });
 
@@ -486,7 +504,14 @@ async function runMarshallAnalysis(ticker, companyName, onProgress, opts = {}) {
       console.log(`📚 Using structured data for ${ticker} (${bundle.annual_pl.length} annual, ${bundle.quarterly_pl.length} quarters)`);
     }
 
-    const rawData = await fetchCompanyData(ticker, companyName, opts.extraQueries || []);
+    // Standard analysis skips web searches entirely (free tier).
+    // Deep analysis runs all 5 searches via Haiku + Perplexity Sonar.
+    let rawData = [];
+    if (isDeep) {
+      rawData = await fetchCompanyData(ticker, companyName, opts.extraQueries || []);
+    } else {
+      onProgress?.({ stage: 'fetching', message: 'Using structured DB data (standard analysis)...', progress: 25 });
+    }
 
     onProgress?.({ stage: 'analysing', message: "Applying Marshall's 4-gate framework...", progress: 40 });
 
@@ -563,7 +588,8 @@ Example:
     const responseText = await callAnalysisModel({
       system: MARSHALL_SYSTEM_PROMPT,
       userContent: analysisPrompt,
-      maxTokens: 16000,
+      maxTokens: isDeep ? 16000 : 8192,
+      deepAnalysis: isDeep,
       onFallback: () => onProgress?.({ stage: 'gates', message: 'Switched to fallback AI — continuing analysis...', progress: 65 }),
     });
 
@@ -582,8 +608,8 @@ Example:
     onProgress?.({ stage: 'processing', message: 'Verifying data quality...', progress: 91 });
     verifyAnalysis(analysisResult, rawData);
 
-    // Tier 2: selective re-fetch for failing critical metrics (capped at 3 calls)
-    if (process.env.ENABLE_TIER2_REFETCH !== 'false') {
+    // Tier 2: selective re-fetch only in deep analysis (requires web search calls)
+    if (isDeep && process.env.ENABLE_TIER2_REFETCH !== 'false') {
       const needsRefetch = Object.values(analysisResult.verifications || {})
         .some(v => v.verdict === 'IMPLAUSIBLE' || v.verdict === 'UNSOURCED' || v.consensus?.agreementBand === 'LOW');
       if (needsRefetch) {
@@ -596,9 +622,9 @@ Example:
     analysisResult.confidence = computeConfidenceScore(analysisResult);
     console.log(`📊 Confidence for ${ticker}: ${analysisResult.confidence.score}/100 (${analysisResult.confidence.band})`);
 
-    // Auto-retry once if first attempt produced LOW confidence
+    // Auto-retry only in deep analysis (standard uses free model; retry won't help without web data)
     const attempt = opts.attempt || 1;
-    if (analysisResult.confidence.band === 'LOW' && attempt === 1) {
+    if (isDeep && analysisResult.confidence.band === 'LOW' && attempt === 1) {
       onProgress?.({ stage: 'gates', message: 'Low confidence — retrying with deeper search...', progress: 92 });
       console.log(`⚠️  Auto-retrying ${ticker} for higher confidence`);
 
@@ -610,6 +636,7 @@ Example:
       const retry = await runMarshallAnalysis(ticker, companyName, onProgress, {
         attempt: 2,
         extraQueries,
+        deepAnalysis: true,
       });
 
       if (retry?.success && retry.analysis.confidence.score > analysisResult.confidence.score) {
@@ -750,11 +777,17 @@ function getCurrentUpdateQuarter() {
 /**
  * Runs an incremental update — uses old analysis + fresh data to produce updated analysis
  */
-async function runUpdateAnalysis(ticker, companyName, oldAnalysis, onProgress) {
+async function runUpdateAnalysis(ticker, companyName, oldAnalysis, onProgress, opts = {}) {
+  const isDeep = opts.deepAnalysis === true;
   try {
     onProgress?.({ stage: 'fetching', message: `Fetching latest quarterly data for ${companyName}...`, progress: 10 });
 
-    const freshData = await fetchUpdateData(ticker, companyName);
+    let freshData = [];
+    if (isDeep) {
+      freshData = await fetchUpdateData(ticker, companyName);
+    } else {
+      onProgress?.({ stage: 'fetching', message: 'Using structured DB data for update (standard mode)...', progress: 25 });
+    }
 
     onProgress?.({ stage: 'analysing', message: 'Comparing with previous analysis...', progress: 40 });
 
@@ -802,7 +835,8 @@ Instructions:
     const responseText = await callAnalysisModel({
       system: MARSHALL_SYSTEM_PROMPT,
       userContent: updatePrompt,
-      maxTokens: 16000,
+      maxTokens: isDeep ? 16000 : 8192,
+      deepAnalysis: isDeep,
       onFallback: () => onProgress?.({ stage: 'gates', message: 'Switched to fallback AI — continuing update...', progress: 60 }),
     });
 

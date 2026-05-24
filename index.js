@@ -161,9 +161,10 @@ app.get('/api/analysis/:ticker/history', requireAuth, async (req, res) => {
 
 // ─── Run new analysis (admin only) ───────────────────────────────────────────
 app.post('/api/analyse', requireAdmin, analysisLimiter, async (req, res) => {
-  const { ticker, companyName, forceRefresh } = req.body;
+  const { ticker, companyName, forceRefresh, deepAnalysis } = req.body;
   if (!ticker || !companyName) return res.status(400).json({ error: 'ticker and companyName are required' });
-  if (!process.env.ANTHROPIC_API_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
+  if (!process.env.OPENROUTER_API_KEY) return res.status(500).json({ error: 'OPENROUTER_API_KEY not configured' });
+  if (deepAnalysis && !process.env.ANTHROPIC_API_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured for Deep Analysis' });
 
   if (!forceRefresh) {
     const cacheKey = `analysis_${ticker.toUpperCase()}`;
@@ -201,8 +202,8 @@ app.post('/api/analyse', requireAdmin, analysisLimiter, async (req, res) => {
   const sendError = (error) => { res.write(`data: ${JSON.stringify({ type: 'error', error })}\n\n`); res.end(); };
 
   try {
-    sendProgress({ stage: 'starting', message: `Starting analysis for ${companyName}...`, progress: 5 });
-    const result = await runMarshallAnalysis(ticker, companyName, sendProgress);
+    sendProgress({ stage: 'starting', message: `Starting ${deepAnalysis ? 'deep' : 'standard'} analysis for ${companyName}...`, progress: 5 });
+    const result = await runMarshallAnalysis(ticker, companyName, sendProgress, { deepAnalysis: !!deepAnalysis });
     if (result.success) {
       await saveAnalysis(result.analysis);
       cache.set(`analysis_${ticker.toUpperCase()}`, result.analysis);
@@ -225,9 +226,10 @@ app.post('/api/analyse', requireAdmin, analysisLimiter, async (req, res) => {
 // ─── Update analysis (admin only) ────────────────────────────────────────────
 app.post('/api/analysis/:ticker/update', requireAdmin, analysisLimiter, async (req, res) => {
   const ticker = req.params.ticker.toUpperCase();
-  const { companyName } = req.body;
+  const { companyName, deepAnalysis } = req.body;
   if (!companyName) return res.status(400).json({ error: 'companyName is required' });
-  if (!process.env.ANTHROPIC_API_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
+  if (!process.env.OPENROUTER_API_KEY) return res.status(500).json({ error: 'OPENROUTER_API_KEY not configured' });
+  if (deepAnalysis && !process.env.ANTHROPIC_API_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured for Deep Analysis' });
 
   const existing = cache.get(`analysis_${ticker}`) || await getAnalysis(ticker);
   if (!existing) return res.status(404).json({ error: 'No existing analysis found. Run a full analysis first.' });
@@ -243,7 +245,7 @@ app.post('/api/analysis/:ticker/update', requireAdmin, analysisLimiter, async (r
 
   try {
     sendProgress({ stage: 'starting', message: `Checking latest data for ${companyName}...`, progress: 5 });
-    const result = await runUpdateAnalysis(ticker, companyName, existing, sendProgress);
+    const result = await runUpdateAnalysis(ticker, companyName, existing, sendProgress, { deepAnalysis: !!deepAnalysis });
     if (result.success) {
       await saveAnalysis(result.analysis);
       cache.set(`analysis_${ticker}`, result.analysis);
