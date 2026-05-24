@@ -249,6 +249,57 @@ function parseShareholdingSection($) {
   return out;
 }
 
+// Parse screener.in's top-of-page quick ratios box (ul#top-ratios).
+// Each <li> has a name span and a value span. Returns a single object or null.
+function parseTopRatios($) {
+  const items = $('#top-ratios li, ul#top-ratios li');
+  if (!items.length) return null;
+  const map = {};
+  items.each((_, li) => {
+    const name = $(li).find('.name').text().trim().toLowerCase();
+    const valueText = $(li).find('.value, .number').text().trim();
+    if (name) map[name] = valueText;
+  });
+  if (Object.keys(map).length === 0) return null;
+
+  const get = (...needles) => {
+    for (const key of Object.keys(map)) {
+      for (const n of needles) {
+        if (key.includes(n)) return map[key];
+      }
+    }
+    return null;
+  };
+
+  // "High / Low" value looks like "1,234 / 567"
+  const hl = get('high / low', 'high/low');
+  let high52 = null, low52 = null;
+  if (hl) {
+    const parts = hl.split('/').map(s => parseNumber(s));
+    high52 = parts[0] ?? null;
+    low52  = parts[1] ?? null;
+  }
+
+  const current_price = parseNumber(get('current price'));
+  const book_value    = parseNumber(get('book value'));
+  const pe            = parseNumber(get('stock p/e', 'p/e'));
+  const pb            = (current_price != null && book_value) ? Number((current_price / book_value).toFixed(2)) : null;
+
+  return {
+    current_price,
+    market_cap_cr:  parseNumber(get('market cap')),
+    pe,
+    pb,
+    book_value,
+    dividend_yield: parseNumber(get('dividend yield')),
+    roce_ttm:       parseNumber(get('roce', 'return on capital')),
+    roe_ttm:        parseNumber(get('roe', 'return on equity')),
+    face_value:     parseNumber(get('face value')),
+    high_52w:       high52,
+    low_52w:        low52,
+  };
+}
+
 function parseScreenerHtml(ticker, html) {
   const T = ticker.toUpperCase();
   const $ = cheerio.load(html);
@@ -257,12 +308,15 @@ function parseScreenerHtml(ticker, html) {
   const annualBs  = parseBsSection($, '#balance-sheet').map(r => ({ ticker: T, ...r }));
   const annualCf  = parseCfSection($, '#cash-flow').map(r => ({ ticker: T, ...r }));
   const sharehold = parseShareholdingSection($).map(r => ({ ticker: T, ...r }));
+  const ratiosObj = parseTopRatios($);
+  const ratios    = ratiosObj ? { ticker: T, ...ratiosObj } : null;
   return {
     annual_pl:    annualPl,
     annual_bs:    annualBs,
     annual_cf:    annualCf,
     quarterly_pl: quartPl,
     shareholding: sharehold,
+    ratios,
   };
 }
 

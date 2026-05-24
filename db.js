@@ -924,6 +924,75 @@ async function renameTickerCascade(oldTicker, newTicker) {
   return result;
 }
 
+// ─── Phase 8: ratios + ranking dataset ───────────────────────────────────────
+
+async function upsertRatios(row) {
+  try {
+    const db = getAdminClient();
+    if (!db || !row?.ticker) return false;
+    const { error } = await db.from('company_ratios').upsert(
+      { ...row, ticker: row.ticker.toUpperCase(), fetched_at: new Date().toISOString() },
+      { onConflict: 'ticker' }
+    );
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('upsertRatios error:', err.message);
+    return false;
+  }
+}
+
+// Merged per-ticker dataset for the ranking engine.
+async function getRankingDataset() {
+  const db = getAdminClient();
+  if (!db) return [];
+  try {
+    const [companiesRes, aggRes, ratiosRes, derivedRes] = await Promise.all([
+      db.from('companies').select('ticker, company_name, sector, is_active'),
+      db.from('company_aggregates').select('*'),
+      db.from('company_ratios').select('*'),
+      db.from('company_derived_annual').select('ticker, fy_end, debt_to_equity').order('fy_end', { ascending: false }),
+    ]);
+    const companies = companiesRes.data || [];
+    const aggByT  = Object.fromEntries((aggRes.data || []).map(r => [r.ticker, r]));
+    const ratByT  = Object.fromEntries((ratiosRes.data || []).map(r => [r.ticker, r]));
+    // latest debt_to_equity per ticker (derived is date-desc; take first seen)
+    const deByT = {};
+    for (const r of (derivedRes.data || [])) {
+      if (!(r.ticker in deByT) && r.debt_to_equity != null) deByT[r.ticker] = r.debt_to_equity;
+    }
+    const rows = [];
+    for (const c of companies) {
+      if (c.is_active === false) continue;
+      const agg = aggByT[c.ticker];
+      if (!agg) continue; // only rank companies with computed aggregates
+      const rat = ratByT[c.ticker] || {};
+      rows.push({
+        ticker: c.ticker,
+        company_name: c.company_name,
+        sector: c.sector,
+        roce_5y_avg:         agg.roce_5y_avg,
+        roe_5y_avg:          agg.roe_5y_avg,
+        revenue_cagr_5y_pct: agg.revenue_cagr_5y_pct,
+        pat_cagr_5y_pct:     agg.pat_cagr_5y_pct,
+        ebitda_margin_5y_avg: agg.ebitda_margin_5y_avg,
+        debt_to_equity:      deByT[c.ticker] ?? null,
+        pe:                  rat.pe ?? null,
+        pb:                  rat.pb ?? null,
+        roe_ttm:             rat.roe_ttm ?? null,
+        roce_ttm:            rat.roce_ttm ?? null,
+        current_price:       rat.current_price ?? null,
+        market_cap_cr:       rat.market_cap_cr ?? null,
+        dividend_yield:      rat.dividend_yield ?? null,
+      });
+    }
+    return rows;
+  } catch (err) {
+    console.error('getRankingDataset error:', err.message);
+    return [];
+  }
+}
+
 async function getCoverage() {
   try {
     const db = getAdminClient();
@@ -961,4 +1030,6 @@ module.exports = {
   // Phase 5.2: shareholding, coverage, universe CRUD
   upsertShareholding, seedCompanies, listCompanies, getStaleCompanies,
   markIngested, updateCompany, deleteCompany, renameTickerCascade, getCoverage,
+  // Phase 8: ratios + ranking
+  upsertRatios, getRankingDataset,
 };

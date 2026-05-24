@@ -34,13 +34,15 @@ const {
   getCompanyBundle,
   upsertShareholding, seedCompanies, listCompanies, getStaleCompanies,
   markIngested, updateCompany, deleteCompany, renameTickerCascade, getCoverage,
+  upsertRatios, getRankingDataset,
 } = require('./db');
+const { rankUniverse, STRATEGY_LIST } = require('./ranking');
 
 // Shared db-helpers bundle passed to the ingestion orchestrator/bulk runner
 const INGEST_DB_HELPERS = {
   upsertAnnualPl, upsertAnnualBs, upsertAnnualCf, upsertQuarterlyPl,
   upsertDerivedAnnual, upsertDerivedQuarterly, upsertAggregates,
-  upsertShareholding, markIngested,
+  upsertShareholding, upsertRatios, markIngested,
 };
 
 const app = express();
@@ -604,6 +606,29 @@ app.post('/api/admin/ingest/:ticker', requireAdmin, async (req, res) => {
         ok ? null : JSON.stringify(result.errors).slice(0, 500));
     }
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Phase 8: rankings ────────────────────────────────────────────────────────
+
+app.get('/api/rankings', requireAuth, async (req, res) => {
+  res.json(STRATEGY_LIST);
+});
+
+app.get('/api/rankings/:strategy', requireAuth, async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 20, 100);
+    const dataset = await getRankingDataset();
+    const results = rankUniverse(req.params.strategy, dataset, limit);
+    res.json({
+      strategy: req.params.strategy,
+      generatedAt: new Date().toISOString(),
+      universeSize: dataset.length,
+      count: results.length,
+      results,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
