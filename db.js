@@ -759,7 +759,7 @@ async function getCompanyBundle(ticker) {
   if (!db) return null;
   const T = ticker.toUpperCase();
   try {
-    const [companyRes, plRes, bsRes, cfRes, qRes, dAnnualRes, dQRes, aggRes] = await Promise.all([
+    const [companyRes, plRes, bsRes, cfRes, qRes, dAnnualRes, dQRes, aggRes, shRes] = await Promise.all([
       db.from('companies').select('*').eq('ticker', T).maybeSingle(),
       db.from('company_annual_pl').select('*').eq('ticker', T).order('fy_end', { ascending: false }),
       db.from('company_annual_bs').select('*').eq('ticker', T).order('fy_end', { ascending: false }),
@@ -768,6 +768,7 @@ async function getCompanyBundle(ticker) {
       db.from('company_derived_annual').select('*').eq('ticker', T).order('fy_end', { ascending: false }),
       db.from('company_derived_quarterly').select('*').eq('ticker', T).order('q_end', { ascending: false }),
       db.from('company_aggregates').select('*').eq('ticker', T).maybeSingle(),
+      db.from('company_shareholding').select('*').eq('ticker', T).order('period_end', { ascending: false }),
     ]);
     return {
       ticker: T,
@@ -779,10 +780,162 @@ async function getCompanyBundle(ticker) {
       derived_annual: dAnnualRes.data || [],
       derived_quarterly: dQRes.data || [],
       aggregates: aggRes.data || null,
+      shareholding: shRes.data || [],
     };
   } catch (err) {
     console.error('getCompanyBundle error:', err.message);
     return null;
+  }
+}
+
+// ─── Phase 5.2: shareholding, coverage, universe CRUD ─────────────────────────
+
+const upsertShareholding = (rows) => _upsertRows('company_shareholding', 'ticker,period_end', rows);
+
+// Seed/insert companies (no overwrite of existing ingested data)
+async function seedCompanies(rows) {
+  try {
+    const db = getAdminClient();
+    if (!db || !rows?.length) return { added: 0 };
+    const payload = rows.map(r => ({
+      ticker: r.ticker.toUpperCase(),
+      company_name: r.company_name ?? null,
+      sector: r.sector ?? null,
+      ingest_status: 'pending',
+      updated_at: new Date().toISOString(),
+    }));
+    // ignoreDuplicates so we don't clobber already-ingested companies' metadata
+    const { error } = await db.from('companies').upsert(payload, { onConflict: 'ticker', ignoreDuplicates: true });
+    if (error) throw error;
+    return { added: payload.length };
+  } catch (err) {
+    console.error('seedCompanies error:', err.message);
+    return { added: 0, error: err.message };
+  }
+}
+
+async function listCompanies() {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('companies').select('*').order('ticker', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('listCompanies error:', err.message);
+    return [];
+  }
+}
+
+async function getStaleCompanies(limit = 50) {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    // nulls first (never ingested), then oldest last_ingested_at
+    const { data, error } = await db.from('companies')
+      .select('ticker, last_ingested_at')
+      .eq('is_active', true)
+      .order('last_ingested_at', { ascending: true, nullsFirst: true })
+      .limit(limit);
+    if (error) throw error;
+    return (data || []).map(r => r.ticker);
+  } catch (err) {
+    console.error('getStaleCompanies error:', err.message);
+    return [];
+  }
+}
+
+async function markIngested(ticker, status, error) {
+  try {
+    const db = getAdminClient();
+    if (!db) return false;
+    const { error: e } = await db.from('companies').update({
+      last_ingested_at: new Date().toISOString(),
+      ingest_status: status,
+      ingest_error: error || null,
+    }).eq('ticker', ticker.toUpperCase());
+    if (e) throw e;
+    return true;
+  } catch (err) {
+    console.error('markIngested error:', err.message);
+    return false;
+  }
+}
+
+async function updateCompany(ticker, updates) {
+  try {
+    const db = getAdminClient();
+    if (!db) return null;
+    const allowed = ['company_name', 'sector', 'sub_sector', 'market_cap_tier', 'is_active'];
+    const row = { updated_at: new Date().toISOString() };
+    for (const k of allowed) if (k in updates) row[k] = updates[k];
+    const { data, error } = await db.from('companies')
+      .update(row).eq('ticker', ticker.toUpperCase()).select().single();
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('updateCompany error:', err.message);
+    return null;
+  }
+}
+
+async function deleteCompany(ticker, hard = false) {
+  try {
+    const db = getAdminClient();
+    if (!db) return false;
+    const T = ticker.toUpperCase();
+    if (hard) {
+      const { error } = await db.from('companies').delete().eq('ticker', T);
+      if (error) throw error;
+    } else {
+      const { error } = await db.from('companies')
+        .update({ is_active: false, updated_at: new Date().toISOString() }).eq('ticker', T);
+      if (error) throw error;
+    }
+    return true;
+  } catch (err) {
+    console.error('deleteCompany error:', err.message);
+    return false;
+  }
+}
+
+// Rename a ticker across companies + all financial child tables (best-effort).
+async function renameTickerCascade(oldTicker, newTicker) {
+  const db = getAdminClient();
+  if (!db) return { ok: false, error: 'no db' };
+  const OLD = oldTicker.toUpperCase();
+  const NEW = newTicker.toUpperCase();
+  const tables = [
+    'companies', 'company_annual_pl', 'company_annual_bs', 'company_annual_cf',
+    'company_quarterly_pl', 'company_derived_annual', 'company_derived_quarterly',
+    'company_aggregates', 'company_shareholding',
+  ];
+  const result = { ok: true, updated: [], errors: [] };
+  for (const t of tables) {
+    try {
+      const { error } = await db.from(t).update({ ticker: NEW }).eq('ticker', OLD);
+      if (error) throw error;
+      result.updated.push(t);
+    } catch (err) {
+      result.ok = false;
+      result.errors.push({ table: t, error: err.message });
+    }
+  }
+  return result;
+}
+
+async function getCoverage() {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('companies')
+      .select('ticker, company_name, sector, is_active, last_ingested_at, ingest_status, ingest_error')
+      .order('last_ingested_at', { ascending: true, nullsFirst: true });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('getCoverage error:', err.message);
+    return [];
   }
 }
 
@@ -805,4 +958,7 @@ module.exports = {
   upsertAnnualPl, upsertAnnualBs, upsertAnnualCf, upsertQuarterlyPl,
   upsertDerivedAnnual, upsertDerivedQuarterly, upsertAggregates,
   getCompanyBundle,
+  // Phase 5.2: shareholding, coverage, universe CRUD
+  upsertShareholding, seedCompanies, listCompanies, getStaleCompanies,
+  markIngested, updateCompany, deleteCompany, renameTickerCascade, getCoverage,
 };
