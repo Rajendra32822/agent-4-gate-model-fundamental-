@@ -54,3 +54,42 @@ test('parseScreenerHtml: no shareholding section returns empty array', () => {
   const r = parseScreenerHtml('TEST', '<html><body></body></html>');
   assert.deepEqual(r.shareholding, []);
 });
+
+// Regression: top-ratios .value span contains a nested .number child.
+// Must NOT double-count (the bug produced 148148 for a price of 148).
+const RATIOS_HTML = `
+<html><body>
+<ul id="top-ratios">
+  <li><span class="name">Market Cap</span><span class="nowrap value">₹ <span class="number">22,685</span> Cr.</span></li>
+  <li><span class="name">Current Price</span><span class="nowrap value">₹ <span class="number">148</span></span></li>
+  <li><span class="name">High / Low</span><span class="nowrap value">₹ <span class="number">155</span> / <span class="number">59.8</span></span></li>
+  <li><span class="name">Stock P/E</span><span class="nowrap value"><span class="number">72.8</span></span></li>
+  <li><span class="name">Book Value</span><span class="nowrap value">₹ <span class="number">32.0</span></span></li>
+  <li><span class="name">Dividend Yield</span><span class="nowrap value"><span class="number">0.07</span> %</span></li>
+  <li><span class="name">ROCE</span><span class="nowrap value"><span class="number">10.9</span> %</span></li>
+  <li><span class="name">ROE</span><span class="nowrap value"><span class="number">6.95</span> %</span></li>
+  <li><span class="name">Face Value</span><span class="nowrap value">₹ <span class="number">1.00</span></span></li>
+</ul>
+</body></html>
+`;
+
+test('parseScreenerHtml: top ratios parse without double-counting digits', () => {
+  const r = parseScreenerHtml('HFCL', RATIOS_HTML);
+  assert.ok(r.ratios);
+  assert.equal(r.ratios.current_price, 148);   // not 148148
+  assert.equal(r.ratios.market_cap_cr, 22685);
+  assert.equal(r.ratios.pe, 72.8);
+  assert.equal(r.ratios.book_value, 32);
+  assert.equal(r.ratios.pb, 4.63);             // 148 / 32
+  assert.equal(r.ratios.dividend_yield, 0.07);
+  assert.equal(r.ratios.roce_ttm, 10.9);
+  assert.equal(r.ratios.roe_ttm, 6.95);
+  assert.equal(r.ratios.face_value, 1);
+  assert.equal(r.ratios.high_52w, 155);
+  assert.equal(r.ratios.low_52w, 59.8);
+});
+
+test('parseScreenerHtml: no top-ratios returns null ratios', () => {
+  const r = parseScreenerHtml('X', '<html><body></body></html>');
+  assert.equal(r.ratios, null);
+});

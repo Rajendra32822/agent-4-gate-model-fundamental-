@@ -257,7 +257,9 @@ function parseTopRatios($) {
   const map = {};
   items.each((_, li) => {
     const name = $(li).find('.name').text().trim().toLowerCase();
-    const valueText = $(li).find('.value, .number').text().trim();
+    // Use the .value span only — it already contains the .number child.
+    // (Selecting both .value AND .number double-counts and concatenates digits.)
+    const valueText = $(li).find('.value').text().replace(/\s+/g, ' ').trim();
     if (name) map[name] = valueText;
   });
   if (Object.keys(map).length === 0) return null;
