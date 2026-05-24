@@ -718,7 +718,29 @@ function sanitizeErrorForClient(err) {
 }
 
 /**
- * Quick company lookup — uses Haiku model to avoid rate limits
+ * Pure local lookup against the universe master (companies table rows).
+ * Free, no AI. Priority: exact ticker → exact name → name startsWith →
+ * name includes → ticker startsWith. Returns the matched row or null.
+ */
+function matchCompanyInUniverse(companies, query) {
+  if (!Array.isArray(companies) || !query) return null;
+  const q = String(query).trim().toLowerCase();
+  if (!q) return null;
+  const name = (c) => (c.company_name || '').toLowerCase();
+  const tick = (c) => (c.ticker || '').toLowerCase();
+  return (
+    companies.find(c => tick(c) === q) ||
+    companies.find(c => name(c) === q) ||
+    companies.find(c => name(c).startsWith(q)) ||
+    companies.find(c => name(c).includes(q)) ||
+    companies.find(c => tick(c).startsWith(q)) ||
+    null
+  );
+}
+
+/**
+ * AI company lookup — fallback when not found in the local universe.
+ * Uses the FREE OpenRouter model (no paid Haiku/Sonar web search).
  */
 async function lookupCompany(query) {
   try {
@@ -871,4 +893,4 @@ Instructions:
   }
 }
 
-module.exports = { runMarshallAnalysis, runUpdateAnalysis, lookupCompany };
+module.exports = { runMarshallAnalysis, runUpdateAnalysis, lookupCompany, matchCompanyInUniverse };
