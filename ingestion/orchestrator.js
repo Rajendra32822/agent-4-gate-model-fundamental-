@@ -39,7 +39,9 @@ async function ingestCompany(ticker, db) {
     if (parsed.annual_bs.length)    await db.upsertAnnualBs(parsed.annual_bs);
     if (parsed.annual_cf.length)    await db.upsertAnnualCf(parsed.annual_cf);
     if (parsed.quarterly_pl.length) await db.upsertQuarterlyPl(parsed.quarterly_pl);
+    if (parsed.shareholding?.length && db.upsertShareholding) await db.upsertShareholding(parsed.shareholding);
     summary.periods_added = parsed.annual_pl.length + parsed.quarterly_pl.length;
+    summary.shareholding_periods = parsed.shareholding?.length || 0;
   } catch (e) {
     summary.errors.push({ stage: 'upsert_source', error: e.message });
     return summary;
