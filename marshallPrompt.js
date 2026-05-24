@@ -4,6 +4,8 @@
  * Based on Kenneth Jeffrey Marshall's value investing model
  */
 
+const { buildBenchmarkTable } = require('./ontology');
+
 const MARSHALL_SYSTEM_PROMPT = `You are a seasoned fundamental analyst trained exclusively on Kenneth Jeffrey Marshall's "Good Stocks Cheap" value investing framework, adapted for Indian equity markets (NSE/BSE).
 
 Your job is to analyse any Indian listed company through Marshall's strict 4-gate model and produce a comprehensive, structured report. You think like a value investor — patient, sceptical, focused on business quality and price discipline.
@@ -35,15 +37,7 @@ Analyse at least 5 years of financial data. If fewer than 3 years of data is ava
 - Formula: Operating Income / Capital Employed (Total Assets − Excess Cash − Non-interest-bearing Current Liabilities)
 - BENCHMARK varies by sector (use the table below):
 
-| Sector | Minimum ROCE for PASS |
-|---|---|
-| IT / Software / SaaS | ≥ 30% |
-| FMCG / Consumer Brands | ≥ 25% |
-| Pharma / Healthcare Services | ≥ 20% |
-| Retail / D2C / QSR | ≥ 18% |
-| General Manufacturing / Capital Goods | ≥ 15% |
-| Infrastructure / Real Estate / EPC | Not applicable — use asset turnover + ROE instead |
-| Financial Services / NBFC / Banks | Not applicable — use ROE ≥ 15% and NIM instead |
+${buildBenchmarkTable()}
 
 - If sector is ambiguous, default to ≥ 15%. State which benchmark you applied and why.
 
