@@ -204,6 +204,51 @@ function parseCfSection($, sectionSelector) {
   return out;
 }
 
+// Convert "Mar 2025" → { date: '2025-03-31', label: 'Mar 2025' } (calendar quarter-end).
+function shareholdingPeriod(label) {
+  const m = String(label).trim().match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})$/);
+  if (!m) return null;
+  const month = MONTHS[m[1]];
+  const year  = parseInt(m[2], 10);
+  const day   = LAST_DAY[month];
+  return {
+    date: `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`,
+    label: `${m[1]} ${year}`,
+  };
+}
+
+function parseShareholdingSection($) {
+  const { headers, rows } = extractTable($, '#shareholding');
+  if (!headers.length || !rows.length) return [];
+  const v = {
+    promoter:     findRow(rows, 'promoter'),
+    fii:          findRow(rows, 'fii'),
+    dii:          findRow(rows, 'dii'),
+    government:   findRow(rows, 'government'),
+    public:       findRow(rows, 'public'),
+    shareholders: findRow(rows, 'no. of shareholders', 'shareholders'),
+    pledge:       findRow(rows, 'pledged'),
+  };
+  const out = [];
+  headers.forEach((h, i) => {
+    const p = shareholdingPeriod(h);
+    if (!p) return;
+    const shCount = parseNumber(v.shareholders?.[i]);
+    out.push({
+      period_end:     p.date,
+      period_label:   p.label,
+      promoter_pct:   parseNumber(v.promoter?.[i]),
+      fii_pct:        parseNumber(v.fii?.[i]),
+      dii_pct:        parseNumber(v.dii?.[i]),
+      government_pct: parseNumber(v.government?.[i]),
+      public_pct:     parseNumber(v.public?.[i]),
+      pledge_pct:     parseNumber(v.pledge?.[i]),
+      shareholders:   shCount != null ? Math.round(shCount) : null,
+    });
+  });
+  return out;
+}
+
 function parseScreenerHtml(ticker, html) {
   const T = ticker.toUpperCase();
   const $ = cheerio.load(html);
@@ -211,11 +256,13 @@ function parseScreenerHtml(ticker, html) {
   const quartPl   = parsePlSection($, '#quarters',    'quarter').map(r => ({ ticker: T, ...r }));
   const annualBs  = parseBsSection($, '#balance-sheet').map(r => ({ ticker: T, ...r }));
   const annualCf  = parseCfSection($, '#cash-flow').map(r => ({ ticker: T, ...r }));
+  const sharehold = parseShareholdingSection($).map(r => ({ ticker: T, ...r }));
   return {
     annual_pl:    annualPl,
     annual_bs:    annualBs,
     annual_cf:    annualCf,
     quarterly_pl: quartPl,
+    shareholding: sharehold,
   };
 }
 
