@@ -36,6 +36,7 @@ export default function NewAnalysis({ onComplete, onBack }) {
   const [stage, setStage] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState(null);
+  const [isDeepRun, setIsDeepRun] = useState(false);
   const esRef = useRef(null);
 
   const handleLookup = async (searchQuery) => {
@@ -68,18 +69,20 @@ export default function NewAnalysis({ onComplete, onBack }) {
     setError(null);
   };
 
-  const handleAnalyse = () => {
+  const handleAnalyse = (deep = false) => {
     if (!ticker || !companyName) return;
+    if (deep && !window.confirm('Deep Analysis uses paid AI (Anthropic) + live web search (~₹2–5 per run). Standard analysis is free. Continue with Deep?')) return;
+    setIsDeepRun(deep);
     setAnalysing(true);
     setProgress(0);
     setStage('starting');
-    setMessage('Initialising analysis...');
+    setMessage(deep ? 'Initialising deep analysis...' : 'Initialising analysis...');
     setError(null);
 
     // Use fetch with streaming
     authFetch('/api/analyse', {
       method: 'POST',
-      body: JSON.stringify({ ticker, companyName })
+      body: JSON.stringify({ ticker, companyName, deepAnalysis: deep })
     }).then(response => {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -129,6 +132,7 @@ export default function NewAnalysis({ onComplete, onBack }) {
         <div className="analysis-progress-view">
           <div className="progress-company">{companyName}</div>
           <div className="progress-ticker font-mono">{ticker}</div>
+          {isDeepRun && <div style={{ marginTop: 8, fontSize: 11, fontWeight: 600, color: 'var(--accent)' }}>💎 Deep Analysis (paid · Anthropic + web search)</div>}
 
           <div style={{ margin: '32px 0' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>
@@ -255,9 +259,14 @@ export default function NewAnalysis({ onComplete, onBack }) {
                 <span>{companyName}</span>
               </div>
             </div>
-            <button className="btn btn-primary btn-analyse-top" onClick={handleAnalyse}>
-              ▶  Analyse {ticker}
-            </button>
+            <div className="cta-top-buttons">
+              <button className="btn btn-primary btn-analyse-top" onClick={() => handleAnalyse(false)}>
+                ▶  Analyse {ticker}
+              </button>
+              <button className="btn btn-deep btn-analyse-top" onClick={() => handleAnalyse(true)} title="Paid: Anthropic + live web search">
+                💎  Deep
+              </button>
+            </div>
           </div>
         )}
 
@@ -305,11 +314,16 @@ export default function NewAnalysis({ onComplete, onBack }) {
         {/* Secondary CTA at bottom for users who scroll through */}
         {(ticker && companyName) && (
           <div className="analyse-cta">
-            <button className="btn btn-primary" style={{ fontSize: 16, padding: '12px 32px' }} onClick={handleAnalyse}>
-              ▶  Analyse {ticker}
-            </button>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <button className="btn btn-primary" style={{ fontSize: 16, padding: '12px 32px' }} onClick={() => handleAnalyse(false)}>
+                ▶  Analyse {ticker}
+              </button>
+              <button className="btn btn-deep" style={{ fontSize: 16, padding: '12px 32px' }} onClick={() => handleAnalyse(true)} title="Paid: Anthropic + live web search">
+                💎  Deep Analysis
+              </button>
+            </div>
             <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 8 }}>
-              Takes 2–4 minutes · Uses live web search · AI-powered
+              Standard is free (structured data). Deep adds live web search + Anthropic (~₹2–5).
             </div>
           </div>
         )}
@@ -396,8 +410,17 @@ export default function NewAnalysis({ onComplete, onBack }) {
           font-weight: 700 !important;
           flex-shrink: 0;
         }
+        .cta-top-buttons { display: flex; gap: 8px; flex-shrink: 0; }
+        .btn-deep {
+          background: transparent;
+          border: 1px solid var(--accent);
+          color: var(--accent);
+          font-weight: 600;
+        }
+        .btn-deep:hover { background: var(--accent); color: #fff; }
         @media (max-width: 600px) {
           .analyse-cta-top { flex-direction: column; align-items: stretch; text-align: center; }
+          .cta-top-buttons { flex-direction: column; }
           .btn-analyse-top { width: 100%; }
         }
         @media (max-width: 768px) {
