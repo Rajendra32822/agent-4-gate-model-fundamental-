@@ -133,6 +133,48 @@ async function fetchYahooCorporateActions(ticker, rangeDays = 365) {
   return { splits: [], dividends: [] };
 }
 
+/**
+ * Fetch daily OHLCV + adjusted-close history for a ticker from Yahoo Finance.
+ * Returns: [{ date, open, high, low, close, adjClose, volume }, ...]
+ * Returns [] on failure — non-throwing; caller decides whether to skip or retry.
+ *
+ * @param {number} rangeDays  ≤365 → 1y, ≤730 → 2y, else 5y
+ * @param {Function} _httpGet injectable for tests; defaults to httpsGetJson
+ */
+async function fetchYahooDailyPrices(ticker, rangeDays = 730, _httpGet = httpsGetJson) {
+  const range = rangeDays <= 365 ? '1y' : rangeDays <= 730 ? '2y' : '5y';
+  for (const ex of ['NS', 'BO']) {
+    const symbol = toYahooSymbol(ticker, ex);
+    try {
+      const { status, json } = await _httpGet(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=${range}`
+      );
+      if (status !== 200) continue;
+      const result = json?.chart?.result?.[0];
+      if (!result) continue;
+      const timestamps  = result.timestamp || [];
+      const quote       = result.indicators?.quote?.[0] || {};
+      const adjCloseArr = result.indicators?.adjclose?.[0]?.adjclose || [];
+      const rows = [];
+      for (let i = 0; i < timestamps.length; i++) {
+        const close = quote.close?.[i];
+        if (close == null) continue;
+        rows.push({
+          date:     new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+          open:     quote.open?.[i]   ?? null,
+          high:     quote.high?.[i]   ?? null,
+          low:      quote.low?.[i]    ?? null,
+          close,
+          adjClose: adjCloseArr[i]    ?? null,
+          volume:   quote.volume?.[i] ?? null,
+        });
+      }
+      if (rows.length > 0) return rows;
+    } catch { /* try next exchange */ }
+  }
+  return [];
+}
+
 // Format helpers for converting raw numbers into the display strings
 // the analysis schema expects (e.g. "₹1,23,456 Cr").
 function formatInrPrice(n) {
@@ -256,6 +298,7 @@ async function runDailyPriceCheck(db) {
 }
 
 module.exports = {
-  fetchYahooPrice, fetchYahooQuote, fetchYahooCorporateActions, formatInrPrice, formatInrCrore,
+  fetchYahooPrice, fetchYahooQuote, fetchYahooCorporateActions, fetchYahooDailyPrices,
+  formatInrPrice, formatInrCrore,
   extractWatchFromAnalysis, runDailyPriceCheck, parseEntryZone, parsePrice,
 };
