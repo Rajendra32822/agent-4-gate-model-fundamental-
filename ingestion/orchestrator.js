@@ -41,6 +41,13 @@ async function ingestCompany(ticker, db) {
     if (parsed.quarterly_pl.length) await db.upsertQuarterlyPl(parsed.quarterly_pl);
     if (parsed.shareholding?.length && db.upsertShareholding) await db.upsertShareholding(parsed.shareholding);
     if (parsed.ratios && db.upsertRatios) await db.upsertRatios(parsed.ratios);
+    if (db.upsertCompany) {
+      await db.upsertCompany({
+        ticker: T,
+        next_result_date:   parsed.ratios?.resultDate ?? null,
+        result_date_source: 'screener.in',
+      });
+    }
     summary.periods_added = parsed.annual_pl.length + parsed.quarterly_pl.length;
     summary.shareholding_periods = parsed.shareholding?.length || 0;
     summary.ratios = parsed.ratios ? 'ok' : 'missing';

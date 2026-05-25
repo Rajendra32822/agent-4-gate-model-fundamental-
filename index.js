@@ -49,7 +49,7 @@ const { validateConfirm, EVENT_TYPES } = require('./corporateActions');
 const INGEST_DB_HELPERS = {
   upsertAnnualPl, upsertAnnualBs, upsertAnnualCf, upsertQuarterlyPl,
   upsertDerivedAnnual, upsertDerivedQuarterly, upsertAggregates,
-  upsertShareholding, upsertRatios, markIngested,
+  upsertShareholding, upsertRatios, markIngested, upsertCompany,
 };
 
 const app = express();
