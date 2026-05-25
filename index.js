@@ -35,8 +35,9 @@ const {
   upsertShareholding, seedCompanies, listCompanies, getStaleCompanies,
   markIngested, updateCompany, deleteCompany, renameTickerCascade, getCoverage,
   upsertRatios, getRankingDataset,
+  listSectors, updateSector, seedSectors,
 } = require('./db');
-const { rankUniverse, STRATEGY_LIST } = require('./ranking');
+const { rankUniverse, STRATEGY_LIST, toSectorMap } = require('./ranking');
 
 // Shared db-helpers bundle passed to the ingestion orchestrator/bulk runner
 const INGEST_DB_HELPERS = {
@@ -662,7 +663,8 @@ app.get('/api/rankings/:strategy', requireAuth, async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 20, 100);
     const dataset = await getRankingDataset();
-    const results = rankUniverse(req.params.strategy, dataset, limit);
+    const sectorMap = toSectorMap(await listSectors());
+    const results = rankUniverse(req.params.strategy, dataset, sectorMap, limit);
     res.json({
       strategy: req.params.strategy,
       generatedAt: new Date().toISOString(),
@@ -673,6 +675,32 @@ app.get('/api/rankings/:strategy', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── Phase 7: sector microtheory benchmarks (admin) ───────────────────────────
+app.get('/api/admin/sectors', requireAdmin, async (req, res) => {
+  res.json(await listSectors());
+});
+
+app.put('/api/admin/sectors/:sector', requireAdmin, async (req, res) => {
+  const { primary_metric, roce_benchmark, roe_benchmark, notes } = req.body || {};
+  if (primary_metric != null && !['roce', 'roe'].includes(primary_metric)) {
+    return res.status(400).json({ error: "primary_metric must be 'roce' or 'roe'" });
+  }
+  for (const [k, v] of [['roce_benchmark', roce_benchmark], ['roe_benchmark', roe_benchmark]]) {
+    if (v != null && (typeof v !== 'number' || v < 0 || !isFinite(v))) {
+      return res.status(400).json({ error: `${k} must be a number >= 0` });
+    }
+  }
+  const result = await updateSector(req.params.sector, { primary_metric, roce_benchmark, roe_benchmark, notes });
+  if (result.error) return res.status(500).json(result);
+  res.json(result);
+});
+
+app.post('/api/admin/sectors/seed', requireAdmin, async (req, res) => {
+  const result = await seedSectors();
+  if (result.error) return res.status(500).json(result);
+  res.json(result);
 });
 
 // ─── Phase 5.2: universe master CRUD ─────────────────────────────────────────
