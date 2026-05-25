@@ -15,6 +15,7 @@ const { fetchYahooPrice } = require('./priceCheck');
 const { ingestCompany } = require('./ingestion/orchestrator');
 const { runBulkIngestion, getBulkState } = require('./ingestion/bulkRunner');
 const { runDailyPricesIngestion, getDailyPricesState } = require('./ingestion/dailyPricesRunner');
+const { runCorporateActionsProposal, getCorporateActionsProposalState } = require('./ingestion/corporateActionsRunner');
 const fsPromises = require('fs').promises;
 const pathMod = require('path');
 const {
@@ -39,7 +40,7 @@ const {
   listSectors, updateSector, seedSectors,
   createCorporateAction, getCorporateAction, listCorporateActions, listCorporateActionsByStatus,
   updateCorporateAction, setCorporateActionStatus, applyTickerChange, updateCompanyName,
-  captureCorporateActionFromAnalysis,
+  captureCorporateActionFromAnalysis, corporateActionExists,
   getLastPriceDate, upsertDailyPrices, getActiveTickersInUniverse,
 } = require('./db');
 const { rankUniverse, STRATEGY_LIST, toSectorMap } = require('./ranking');
@@ -894,6 +895,20 @@ app.post('/api/cron/ingest-daily-prices', async (req, res) => {
   const tickers = await getActiveTickersInUniverse();
   runDailyPricesIngestion(tickers, { getLastPriceDate, upsertDailyPrices })
     .catch(e => console.error('[cron] daily prices error:', e.message));
+  res.status(202).json({ started: true, tickers: tickers.length });
+});
+
+app.post('/api/cron/propose-corporate-actions', async (req, res) => {
+  const secret = req.headers['x-cron-secret'];
+  if (!secret || secret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (getCorporateActionsProposalState().running) {
+    return res.status(409).json({ error: 'Already running' });
+  }
+  const tickers = await getActiveTickersInUniverse();
+  runCorporateActionsProposal(tickers, { corporateActionExists, createCorporateAction })
+    .catch(e => console.error('[cron] corporate actions proposal error:', e.message));
   res.status(202).json({ started: true, tickers: tickers.length });
 });
 
