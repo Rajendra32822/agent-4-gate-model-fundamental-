@@ -125,3 +125,37 @@ test('parseScreenerHtml: empty/garbage HTML returns empty arrays', () => {
   assert.deepEqual(result.quarterly_pl, []);
   assert.deepEqual(result.annual_pl, []);
 });
+
+const { parseResultDate } = require('../ingestion/screenerScraper');
+
+const RATIOS_HTML = `<html><body>
+<ul id="top-ratios">
+  <li><span class="name">Current Price</span><span class="value">3,500</span></li>
+  <li><span class="name">Result date</span><span class="value">30 Jun 2027</span></li>
+</ul>
+</body></html>`;
+
+test('parseResultDate: month-year only → first of month', () => {
+  assert.equal(parseResultDate('Jun 2027'), '2027-06-01');
+});
+
+test('parseResultDate: day-month-year → exact date', () => {
+  assert.equal(parseResultDate('30 Jun 2027'), '2027-06-30');
+});
+
+test('parseResultDate: stale date (>5 days past) → null', () => {
+  assert.equal(parseResultDate('01 Jan 2020'), null);
+});
+
+test('parseResultDate: null → null', () => {
+  assert.equal(parseResultDate(null), null);
+});
+
+test('parseResultDate: N/A → null', () => {
+  assert.equal(parseResultDate('N/A'), null);
+});
+
+test('parseScreenerHtml: extracts result date from top-ratios section', () => {
+  const result = parseScreenerHtml('TEST', RATIOS_HTML);
+  assert.equal(result.ratios.resultDate, '2027-06-30');
+});

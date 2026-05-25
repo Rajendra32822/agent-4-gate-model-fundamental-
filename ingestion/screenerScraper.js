@@ -249,6 +249,30 @@ function parseShareholdingSection($) {
   return out;
 }
 
+/**
+ * Parse screener.in's "Result date" string into ISO YYYY-MM-DD.
+ * Returns null for unparseable, N/A, or dates >5 days in the past.
+ * @param {string|null} str  e.g. "Jun 2025" or "30 Jun 2025"
+ */
+function parseResultDate(str) {
+  if (!str || typeof str !== 'string') return null;
+  const s = str.trim();
+  if (!s || /^n\/?a$/i.test(s)) return null;
+  const m = s.match(/(?:(\d{1,2})\s+)?([A-Za-z]{3})\s+(\d{4})/);
+  if (!m) return null;
+  const day  = m[1] ? parseInt(m[1], 10) : 1;
+  const key  = m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase();
+  const mon  = MONTHS[key];
+  const year = parseInt(m[3], 10);
+  if (!mon || year < 2000 || year > 2100) return null;
+  const dateStr = `${year}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const date  = new Date(dateStr);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if ((today - date) / 86400000 > 5) return null;
+  return dateStr;
+}
+
 // Parse screener.in's top-of-page quick ratios box (ul#top-ratios).
 // Each <li> has a name span and a value span. Returns a single object or null.
 function parseTopRatios($) {
@@ -299,6 +323,7 @@ function parseTopRatios($) {
     face_value:     parseNumber(get('face value')),
     high_52w:       high52,
     low_52w:        low52,
+    resultDate:     parseResultDate(get('result date', 'result')),
   };
 }
 
@@ -348,4 +373,4 @@ function fetchScreenerHtml(ticker, opts = {}) {
   });
 }
 
-module.exports = { fetchScreenerHtml, parseScreenerHtml, normalizePeriod, parseNumber };
+module.exports = { fetchScreenerHtml, parseScreenerHtml, normalizePeriod, parseNumber, parseResultDate };
