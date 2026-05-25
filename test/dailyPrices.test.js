@@ -107,3 +107,80 @@ test('rangeDaysFor: today → 0 (skip, already up to date)', () => {
   const today = new Date().toISOString().split('T')[0];
   assert.equal(rangeDaysFor(today), 0);
 });
+
+// ─── runDailyPricesIngestion ──────────────────────────────────────────────────
+
+const { runDailyPricesIngestion } = require('../ingestion/dailyPricesRunner');
+
+function makeFakeDb(opts = {}) {
+  const upserted = [];
+  return {
+    upserted,
+    getLastPriceDate:  async (ticker) => (opts.lastDates || {})[ticker] ?? null,
+    upsertDailyPrices: async (rows)   => { upserted.push(...rows); return true; },
+  };
+}
+
+const SAMPLE_ROW = {
+  date: '2021-01-01', open: 100, high: 105, low: 99,
+  close: 103, adjClose: 102.5, volume: 1000000,
+};
+
+test('runDailyPricesIngestion: processes all tickers and returns counts', async () => {
+  const db = makeFakeDb();
+  const r = await runDailyPricesIngestion(['TCS', 'INFY'], db, {
+    throttleMs: 0,
+    fetchFn: async () => [SAMPLE_ROW],
+  });
+  assert.equal(r.total, 2);
+  assert.equal(r.done, 2);
+  assert.equal(r.failed, 0);
+  assert.equal(r.skipped, 0);
+  assert.equal(db.upserted.length, 2);
+  assert.equal(db.upserted[0].ticker, 'TCS');
+});
+
+test('runDailyPricesIngestion: skips ticker already up to date', async () => {
+  const today = new Date().toISOString().split('T')[0];
+  const db = makeFakeDb({ lastDates: { TCS: today } });
+  const r = await runDailyPricesIngestion(['TCS', 'INFY'], db, {
+    throttleMs: 0,
+    fetchFn: async () => [SAMPLE_ROW],
+  });
+  assert.equal(r.done, 1);
+  assert.equal(r.skipped, 1);
+});
+
+test('runDailyPricesIngestion: fetch failure counts as failed, run continues', async () => {
+  const db = makeFakeDb();
+  const r = await runDailyPricesIngestion(['TCS', 'INFY'], db, {
+    throttleMs: 0,
+    fetchFn: async (ticker) => {
+      if (ticker === 'TCS') throw new Error('Yahoo blocked');
+      return [SAMPLE_ROW];
+    },
+  });
+  assert.equal(r.done, 1);
+  assert.equal(r.failed, 1);
+});
+
+test('runDailyPricesIngestion: empty rows from fetch counts as done (not failed)', async () => {
+  const db = makeFakeDb();
+  const r = await runDailyPricesIngestion(['TCS'], db, {
+    throttleMs: 0,
+    fetchFn: async () => [],
+  });
+  assert.equal(r.done, 1);
+  assert.equal(r.failed, 0);
+  assert.equal(db.upserted.length, 0);
+});
+
+test('runDailyPricesIngestion: empty ticker list completes cleanly', async () => {
+  const db = makeFakeDb();
+  const r = await runDailyPricesIngestion([], db, {
+    throttleMs: 0,
+    fetchFn: async () => [],
+  });
+  assert.equal(r.total, 0);
+  assert.equal(r.done, 0);
+});
