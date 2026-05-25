@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const { SECTOR_SEED } = require('./sectorSeed');
+const { TICKER_KEYED_TABLES, parseCorporateActionFromText, resolveChain } = require('./corporateActions');
 
 let supabase = null;
 let supabaseAdmin = null;
@@ -938,6 +939,77 @@ async function deleteCompany(ticker, hard = false) {
 }
 
 // Rename a ticker across companies + all financial child tables (best-effort).
+// ── Phase 9: corporate actions ledger ──
+async function createCorporateAction(row) {
+  const db = getAdminClient();
+  if (!db) return { error: 'no db' };
+  const { data, error } = await db.from('corporate_actions')
+    .insert({ ...row, ticker: String(row.ticker).toUpperCase(), updated_at: new Date().toISOString() })
+    .select().maybeSingle();
+  if (error) return { error: error.message };
+  return { action: data };
+}
+
+async function getCorporateAction(id) {
+  const db = getAdminClient();
+  if (!db) return null;
+  const { data, error } = await db.from('corporate_actions').select('*').eq('id', id).maybeSingle();
+  if (error) return null;
+  return data;
+}
+
+async function listCorporateActions(ticker, status) {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    let q = db.from('corporate_actions').select('*').eq('ticker', String(ticker).toUpperCase());
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q.order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('listCorporateActions error:', err.message);
+    return [];
+  }
+}
+
+async function listCorporateActionsByStatus(status) {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('corporate_actions').select('*')
+      .eq('status', status).order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('listCorporateActionsByStatus error:', err.message);
+    return [];
+  }
+}
+
+async function updateCorporateAction(id, patch) {
+  const db = getAdminClient();
+  if (!db) return { error: 'no db' };
+  const allowed = ['event_type', 'ratio', 'ex_date', 'announcement_date', 'record_date',
+                   'new_ticker', 'new_name', 'linked_ticker', 'amount', 'notes'];
+  const clean = {};
+  for (const k of allowed) if (k in patch) clean[k] = patch[k];
+  clean.updated_at = new Date().toISOString();
+  const { data, error } = await db.from('corporate_actions').update(clean).eq('id', id).select().maybeSingle();
+  if (error) return { error: error.message };
+  return { action: data };
+}
+
+async function setCorporateActionStatus(id, status, extra = {}) {
+  const db = getAdminClient();
+  if (!db) return { error: 'no db' };
+  const { data, error } = await db.from('corporate_actions')
+    .update({ status, ...extra, updated_at: new Date().toISOString() })
+    .eq('id', id).select().maybeSingle();
+  if (error) return { error: error.message };
+  return { action: data };
+}
+
 async function renameTickerCascade(oldTicker, newTicker) {
   const db = getAdminClient();
   if (!db) return { ok: false, error: 'no db' };
@@ -1072,4 +1144,7 @@ module.exports = {
   upsertRatios, getRankingDataset,
   // Phase 7: sector microtheories
   listSectors, updateSector, seedSectors,
+  // Phase 9: corporate actions
+  createCorporateAction, getCorporateAction, listCorporateActions, listCorporateActionsByStatus,
+  updateCorporateAction, setCorporateActionStatus,
 };
