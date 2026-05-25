@@ -1015,11 +1015,7 @@ async function renameTickerCascade(oldTicker, newTicker) {
   if (!db) return { ok: false, error: 'no db' };
   const OLD = oldTicker.toUpperCase();
   const NEW = newTicker.toUpperCase();
-  const tables = [
-    'companies', 'company_annual_pl', 'company_annual_bs', 'company_annual_cf',
-    'company_quarterly_pl', 'company_derived_annual', 'company_derived_quarterly',
-    'company_aggregates', 'company_shareholding',
-  ];
+  const tables = TICKER_KEYED_TABLES;
   const result = { ok: true, updated: [], errors: [] };
   for (const t of tables) {
     try {
@@ -1032,6 +1028,74 @@ async function renameTickerCascade(oldTicker, newTicker) {
     }
   }
   return result;
+}
+
+async function writeTickerHistory(oldTicker, newTicker, reason, actionId, changeDate) {
+  const db = getAdminClient();
+  if (!db) return { error: 'no db' };
+  const { error } = await db.from('ticker_history').insert({
+    old_ticker: String(oldTicker).toUpperCase(),
+    new_ticker: String(newTicker).toUpperCase(),
+    change_date: changeDate || new Date().toISOString().split('T')[0],
+    reason: reason || null,
+    action_id: actionId || null,
+  });
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+async function applyTickerChange(oldTicker, newTicker, actionId, changeDate) {
+  const cascade = await renameTickerCascade(oldTicker, newTicker);
+  const hist = await writeTickerHistory(oldTicker, newTicker, 'TICKER_CHANGE', actionId, changeDate);
+  return { ...cascade, ticker_history: hist };
+}
+
+async function updateCompanyName(ticker, newName) {
+  const db = getAdminClient();
+  if (!db) return { error: 'no db' };
+  const { error } = await db.from('companies')
+    .update({ company_name: newName, updated_at: new Date().toISOString() })
+    .eq('ticker', String(ticker).toUpperCase());
+  if (error) return { error: error.message };
+  return { ok: true };
+}
+
+// Redirect an old symbol to its current one. Fail-safe: any error → return input.
+async function resolveTicker(ticker) {
+  try {
+    const db = getAdminClient();
+    if (!db || !ticker) return ticker;
+    const { data, error } = await db.from('ticker_history').select('old_ticker, new_ticker');
+    if (error || !data || !data.length) return ticker;
+    return resolveChain(data, ticker);
+  } catch {
+    return ticker;
+  }
+}
+
+// Best-effort: drop a PROPOSED row from an analysis's corporateActions text.
+// Fail-safe + deduped. Never mutates anything.
+async function captureCorporateActionFromAnalysis(analysis) {
+  try {
+    const parsed = parseCorporateActionFromText(analysis?.corporateActions);
+    if (!parsed) return { skipped: 'no action' };
+    const db = getAdminClient();
+    if (!db || !analysis?.ticker) return { skipped: 'no db/ticker' };
+    const ticker = String(analysis.ticker).toUpperCase();
+    const { data: existing } = await db.from('corporate_actions').select('id')
+      .eq('ticker', ticker).eq('event_type', parsed.event_type)
+      .in('status', ['proposed', 'confirmed']).limit(1);
+    if (existing && existing.length) return { skipped: 'duplicate' };
+    const { error } = await db.from('corporate_actions').insert({
+      ticker, event_type: parsed.event_type, ratio: parsed.ratio,
+      status: 'proposed', source: 'analysis',
+      notes: String(analysis.corporateActions).slice(0, 500),
+    });
+    if (error) return { error: error.message };
+    return { proposed: parsed.event_type };
+  } catch (e) {
+    return { error: e.message };
+  }
 }
 
 // ─── Phase 8: ratios + ranking dataset ───────────────────────────────────────
@@ -1147,4 +1211,5 @@ module.exports = {
   // Phase 9: corporate actions
   createCorporateAction, getCorporateAction, listCorporateActions, listCorporateActionsByStatus,
   updateCorporateAction, setCorporateActionStatus,
+  applyTickerChange, writeTickerHistory, updateCompanyName, resolveTicker, captureCorporateActionFromAnalysis,
 };
