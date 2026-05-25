@@ -723,7 +723,14 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
             </div>
           )}
 
-          {gate3.valuationScenarios && (
+          {gate3.valuationUnreliable && (
+            <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--warn)', background: 'var(--warn-bg)', border: '1px solid var(--warn-border)' }}>
+              ⚠ Valuation scenarios suppressed — they could not be anchored to the live market price.
+              {gate3.valuationWarning ? ` ${gate3.valuationWarning}` : ' Re-run with Deep Analysis or refresh the data.'}
+            </div>
+          )}
+
+          {gate3.valuationScenarios && !gate3.valuationUnreliable && (
             <div style={{ marginTop: 16 }}>
               <div className="section-label">Valuation Scenarios</div>
 
@@ -744,7 +751,7 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
             </div>
           )}
 
-          {gate3.entryZone && (
+          {gate3.entryZone && !gate3.valuationUnreliable && (
             <div className="entry-zone-banner">
               <span className="entry-zone-label">Value Entry Zone</span>
               <span className="entry-zone-value font-mono">{gate3.entryZone}</span>
