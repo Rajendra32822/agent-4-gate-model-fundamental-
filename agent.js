@@ -83,6 +83,25 @@ function checkValuationConsistency(currentPrice, candidatePrices) {
   return { reliable: true, reason: 'within range' };
 }
 
+// Build an authoritative live-price block to anchor the AI's Gate 3 valuation.
+// Returns null if no usable price (caller omits the block).
+function buildLiveMarketBlock(quote) {
+  if (!quote || quote.price == null) return null;
+  const { formatInrPrice, formatInrCrore } = require('./priceCheck');
+  const lines = [
+    '=== LIVE MARKET DATA (source: Yahoo Finance, fetched today) — AUTHORITATIVE CURRENT-PRICE ANCHOR ===',
+    `Current Price: ${formatInrPrice(quote.price)}`,
+  ];
+  if (quote.marketCap != null) lines.push(`Market Cap: ${formatInrCrore(quote.marketCap)}`);
+  if (quote.peRatio != null)   lines.push(`P/E (TTM): ${quote.peRatio.toFixed(1)}×`);
+  if (quote.priceBook != null) lines.push(`P/B: ${quote.priceBook.toFixed(2)}x`);
+  if (quote.fiftyTwoWeekHigh != null && quote.fiftyTwoWeekLow != null) {
+    lines.push(`52-week High / Low: ${formatInrPrice(quote.fiftyTwoWeekHigh)} / ${formatInrPrice(quote.fiftyTwoWeekLow)}`);
+  }
+  lines.push('=== END LIVE MARKET DATA — anchor ALL Gate 3 prices (entry zone, bear/base/bull) to this current price ===');
+  return lines.join('\n');
+}
+
 /**
  * Calls the analysis model.
  * Standard (default): free OpenRouter model only — zero Anthropic credits consumed.
@@ -544,6 +563,14 @@ async function runMarshallAnalysis(ticker, companyName, onProgress, opts = {}) {
       console.log(`📚 Using structured data for ${ticker} (${bundle.annual_pl.length} annual, ${bundle.quarterly_pl.length} quarters)`);
     }
 
+    // Fetch the live price UP FRONT so the AI can anchor Gate 3 valuation to it.
+    // Without this, standard analysis (no web search) produces unanchored entry
+    // zones / scenarios disconnected from the real price. Reused for enrichment below.
+    const { fetchYahooQuote } = require('./priceCheck');
+    const liveQuote = await fetchYahooQuote(ticker).catch(() => null);
+    const liveMarketBlock = buildLiveMarketBlock(liveQuote);
+    if (liveMarketBlock) console.log(`📈 Live price anchor for ${ticker}: ₹${liveQuote.price}`);
+
     // Standard analysis skips web searches entirely (free tier).
     // Deep analysis runs all 5 searches via Haiku + Perplexity Sonar.
     let rawData = [];
@@ -568,7 +595,7 @@ Analyse ${companyName} (${ticker}, listed on NSE/BSE India) using Marshall's com
 
 Financial and business data gathered:
 
-${structuredContext ? structuredContext + '\n\n' : ''}${dataContext}
+${structuredContext ? structuredContext + '\n\n' : ''}${liveMarketBlock ? liveMarketBlock + '\n\n' : ''}${dataContext}
 
 Today's date: ${new Date().toISOString().split('T')[0]}
 
@@ -592,13 +619,15 @@ Instructions:
 
 Return ONLY a valid JSON object matching the exact schema. No preamble or explanation outside the JSON.
 
-MANDATORY — Gate 3 fields that MUST be populated from the search data above:
-- gate3.metrics.currentPrice: STRING like "₹2,450" — use the LIVE price from Data Source 1 (today's date)
-- gate3.metrics.marketCap: STRING like "₹1,23,456 Cr" — use the market cap from Data Source 1
-- gate3.metrics.peRatio: OBJECT { "value": "25×", "status": "INFO" } — use P/E from Data Source 1
-- gate3.metrics.priceBook: OBJECT { "value": "3.5x", "benchmark": "≤3×", "status": "PASS|FAIL|WARN" } — use P/B from Data Source 1
-- gate3.metrics.dividendYield: OBJECT { "value": "1.2%", "status": "INFO" } — use dividend yield from Data Source 1
-If Data Source 1 has no price, check all other sources. If genuinely not found, set value to "N/A — not found in search data" but keep the object shape — do NOT invent a number and do NOT change the field type.
+MANDATORY — Gate 3 fields:
+- gate3.metrics.currentPrice: STRING like "₹2,450" — use the Current Price from the LIVE MARKET DATA block above (authoritative). Only if that block is absent, fall back to Data Source 1.
+- gate3.metrics.marketCap: STRING like "₹1,23,456 Cr" — use the LIVE MARKET DATA block, else Data Source 1
+- gate3.metrics.peRatio: OBJECT { "value": "25×", "status": "INFO" } — use the LIVE MARKET DATA block, else Data Source 1
+- gate3.metrics.priceBook: OBJECT { "value": "3.5x", "benchmark": "≤3×", "status": "PASS|FAIL|WARN" } — use the LIVE MARKET DATA block, else Data Source 1
+- gate3.metrics.dividendYield: OBJECT { "value": "1.2%", "status": "INFO" } — use the LIVE MARKET DATA block, else Data Source 1
+If no price is available anywhere, set value to "N/A — not found" but keep the object shape — do NOT invent a number and do NOT change the field type.
+
+CRITICAL — PRICE ANCHOR: The Current Price in the LIVE MARKET DATA block is the ground truth. gate3.entryZone and ALL gate3.valuationScenarios (bear/base/bull) prices MUST be in the same order of magnitude as that current price. A per-share entry zone or scenario more than ~2× above or below the current price is almost certainly an error (e.g. confusing ₹-crore aggregates with a per-share price, or a missed stock split) — re-derive it. NEVER output a per-share price target in the thousands for a stock currently trading in the hundreds.
 
 MANDATORY — Source citations (anti-hallucination guard):
 Include a top-level "citations" object in your JSON output that maps each critical metric key
@@ -641,8 +670,9 @@ Example:
     analysisResult.rawDataSources = rawData.length;
 
     // Override AI-extracted price/marketCap with deterministic Yahoo Finance data
+    // (reuse the quote fetched up front for the price anchor — no second Yahoo call)
     onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 88 });
-    await enrichWithLiveMarketData(analysisResult);
+    await enrichWithLiveMarketData(analysisResult, liveQuote);
 
     // Run Tier-1 verification (sanity, citations, cross-source consensus, freshness)
     onProgress?.({ stage: 'processing', message: 'Verifying data quality...', progress: 91 });
@@ -703,11 +733,11 @@ Example:
  * with authoritative data from Yahoo Finance. Falls back silently if Yahoo
  * is unreachable — the AI-extracted values stay as-is.
  */
-async function enrichWithLiveMarketData(analysis) {
+async function enrichWithLiveMarketData(analysis, prefetchedQuote) {
   if (!analysis?.ticker || !analysis?.gate3?.metrics) return;
   const { fetchYahooQuote, formatInrPrice, formatInrCrore } = require('./priceCheck');
   try {
-    const q = await fetchYahooQuote(analysis.ticker);
+    const q = prefetchedQuote || await fetchYahooQuote(analysis.ticker);
     const m = analysis.gate3.metrics;
 
     // Plain-string fields in the schema
