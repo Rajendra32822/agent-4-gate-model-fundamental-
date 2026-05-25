@@ -36,8 +36,12 @@ const {
   markIngested, updateCompany, deleteCompany, renameTickerCascade, getCoverage,
   upsertRatios, getRankingDataset,
   listSectors, updateSector, seedSectors,
+  createCorporateAction, getCorporateAction, listCorporateActions, listCorporateActionsByStatus,
+  updateCorporateAction, setCorporateActionStatus, applyTickerChange, updateCompanyName,
+  captureCorporateActionFromAnalysis,
 } = require('./db');
 const { rankUniverse, STRATEGY_LIST, toSectorMap } = require('./ranking');
+const { validateConfirm, EVENT_TYPES } = require('./corporateActions');
 
 // Shared db-helpers bundle passed to the ingestion orchestrator/bulk runner
 const INGEST_DB_HELPERS = {
@@ -254,6 +258,7 @@ app.post('/api/analyse', requireAdmin, analysisLimiter, async (req, res) => {
       } catch (e) { console.error('Auto-watch error:', e.message); }
       // Save structured fundamental metrics for cross-company querying
       saveFundamentalMetrics(result.analysis).catch(e => console.error('Metrics save error:', e.message));
+      captureCorporateActionFromAnalysis(result.analysis).catch(e => console.error('Corp-action capture error:', e.message));
       sendResult({ analysis: result.analysis });
     } else {
       sendError(result.error);
@@ -296,6 +301,7 @@ app.post('/api/analysis/:ticker/update', requireAdmin, analysisLimiter, async (r
       } catch (e) { console.error('Auto-watch update error:', e.message); }
       // Save structured fundamental metrics
       saveFundamentalMetrics(result.analysis).catch(e => console.error('Metrics save error:', e.message));
+      captureCorporateActionFromAnalysis(result.analysis).catch(e => console.error('Corp-action capture error:', e.message));
       sendResult({ analysis: result.analysis });
     } else {
       sendError(result.error);
@@ -701,6 +707,57 @@ app.post('/api/admin/sectors/seed', requireAdmin, async (req, res) => {
   const result = await seedSectors();
   if (result.error) return res.status(500).json(result);
   res.json(result);
+});
+
+// ─── Phase 9: corporate actions ───────────────────────────────────────────────
+app.get('/api/corporate-actions/:ticker', requireAuth, async (req, res) => {
+  res.json(await listCorporateActions(req.params.ticker, 'confirmed'));
+});
+
+app.get('/api/admin/corporate-actions', requireAdmin, async (req, res) => {
+  const status = req.query.status || 'proposed';
+  res.json(await listCorporateActionsByStatus(status));
+});
+
+app.post('/api/admin/corporate-actions', requireAdmin, async (req, res) => {
+  const { ticker, event_type } = req.body || {};
+  if (!ticker || !event_type) return res.status(400).json({ error: 'ticker and event_type required' });
+  if (!EVENT_TYPES.includes(event_type)) return res.status(400).json({ error: 'invalid event_type' });
+  const result = await createCorporateAction({ ...req.body, status: 'proposed', source: 'manual' });
+  if (result.error) return res.status(500).json(result);
+  res.json(result);
+});
+
+app.put('/api/admin/corporate-actions/:id', requireAdmin, async (req, res) => {
+  const existing = await getCorporateAction(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'not found' });
+  if (existing.status !== 'proposed') return res.status(400).json({ error: 'can only edit proposed actions' });
+  const result = await updateCorporateAction(req.params.id, req.body || {});
+  if (result.error) return res.status(500).json(result);
+  res.json(result);
+});
+
+app.post('/api/admin/corporate-actions/:id/confirm', requireAdmin, async (req, res) => {
+  const action = await getCorporateAction(req.params.id);
+  if (!action) return res.status(404).json({ error: 'not found' });
+  if (action.status !== 'proposed') return res.status(400).json({ error: `already ${action.status}` });
+  const v = validateConfirm(action);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+
+  let applied = null;
+  if (action.event_type === 'TICKER_CHANGE') {
+    applied = await applyTickerChange(action.ticker, action.new_ticker, action.id, action.ex_date);
+  } else if (action.event_type === 'NAME_CHANGE') {
+    applied = await updateCompanyName(action.ticker, action.new_name);
+  }
+  await setCorporateActionStatus(req.params.id, 'confirmed', { applied_at: new Date().toISOString() });
+  res.json({ confirmed: true, applied });
+});
+
+app.post('/api/admin/corporate-actions/:id/dismiss', requireAdmin, async (req, res) => {
+  const result = await setCorporateActionStatus(req.params.id, 'dismissed');
+  if (result.error) return res.status(500).json(result);
+  res.json({ dismissed: true });
 });
 
 // ─── Phase 5.2: universe master CRUD ─────────────────────────────────────────
