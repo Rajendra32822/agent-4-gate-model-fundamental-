@@ -279,6 +279,14 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
   const [updateProgress, setUpdateProgress] = useState({ stage: '', message: '', progress: 0 });
   const [watchlisted, setWatchlisted] = useState(false);
   const [watchlistLoading, setWatchlistLoading] = useState(false);
+  const [corpActions, setCorpActions] = useState([]);
+
+  useEffect(() => {
+    if (!ticker) return;
+    authFetch(`/api/corporate-actions/${ticker}`)
+      .then(r => r.json()).then(d => setCorpActions(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, [ticker]);
 
   useEffect(() => {
     authFetch(`/api/analysis/${ticker}`)
@@ -761,6 +769,20 @@ export default function AnalysisView({ ticker, onBack, onAnalysisComplete, isAdm
           <IndiaFlags flags={gate3.indiaFlags} />
           <Narrative text={gate3.narrative} />
         </GateSection>
+      )}
+
+      {corpActions.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div className="section-label">Corporate Actions</div>
+          <ul style={{ margin: '6px 0', paddingLeft: 18, fontSize: 12, color: 'var(--text-3)' }}>
+            {corpActions.map(a => (
+              <li key={a.id}>
+                <b>{a.event_type}</b>{a.ratio ? ` ${a.ratio}` : ''}{a.ex_date ? ` · ex ${a.ex_date}` : ''}
+                {a.new_ticker ? ` → ${a.new_ticker}` : ''}{a.new_name ? ` → ${a.new_name}` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {/* Risks & Catalysts */}

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import authFetch from '../lib/api';
 import CoveragePanel from '../components/CoveragePanel';
 import SectorBenchmarksPanel from '../components/admin/SectorBenchmarksPanel';
+import CorporateActionsPanel from '../components/admin/CorporateActionsPanel';
 
 const ADMIN_EMAIL = 'rajendra.amil@gmail.com';
 
@@ -284,6 +285,8 @@ export default function AdminPanel() {
         <CoveragePanel />
 
         <SectorBenchmarksPanel />
+
+        <CorporateActionsPanel />
 
         {/* Backfill Watches */}
         <div style={styles.card}>
