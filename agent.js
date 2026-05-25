@@ -674,6 +674,26 @@ Example:
     onProgress?.({ stage: 'processing', message: 'Fetching live market data...', progress: 88 });
     await enrichWithLiveMarketData(analysisResult, liveQuote);
 
+    // Defense-in-depth: flag valuations wildly disconnected from the live price
+    // (e.g. an entry zone in the thousands for a stock trading in the hundreds)
+    // rather than displaying absurd targets. Runs after enrichment sets currentPrice.
+    try {
+      const g3 = analysisResult.gate3;
+      if (g3) {
+        const cmp = analysisResult.liveQuote?.price ?? parsePriceNumber(g3.metrics?.currentPrice);
+        const candidates = [
+          parsePriceNumber(g3.valuationScenarios?.baseCase?.price),
+          parseEntryZoneMidpoint(g3.entryZone),
+        ];
+        const verdict = checkValuationConsistency(cmp, candidates);
+        if (!verdict.reliable) {
+          g3.valuationUnreliable = true;
+          g3.valuationWarning = `Valuation could not be anchored to the live price (${verdict.reason}). Treat the entry zone and scenarios as unreliable — re-run with Deep Analysis or refresh data.`;
+          console.warn(`⚠️  Valuation inconsistency for ${ticker}: ${verdict.reason}`);
+        }
+      }
+    } catch (e) { console.error('Valuation reconciliation error:', e.message); }
+
     // Run Tier-1 verification (sanity, citations, cross-source consensus, freshness)
     onProgress?.({ stage: 'processing', message: 'Verifying data quality...', progress: 91 });
     verifyAnalysis(analysisResult, rawData);
