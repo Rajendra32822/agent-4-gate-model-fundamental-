@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const { SECTOR_SEED } = require('./sectorSeed');
 
 let supabase = null;
 let supabaseAdmin = null;
@@ -827,6 +828,43 @@ async function listCompanies() {
   }
 }
 
+// ── Phase 7: sector microtheory benchmarks ──
+async function listSectors() {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db.from('sectors')
+      .select('sector, primary_metric, roce_benchmark, roe_benchmark, notes')
+      .order('sector', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('listSectors error:', err.message);
+    return [];
+  }
+}
+
+async function updateSector(sector, patch) {
+  const db = getAdminClient();
+  if (!db) return { error: 'no db' };
+  const allowed = ['primary_metric', 'roce_benchmark', 'roe_benchmark', 'notes'];
+  const clean = {};
+  for (const k of allowed) if (k in patch) clean[k] = patch[k];
+  clean.updated_at = new Date().toISOString();
+  const { data, error } = await db.from('sectors').update(clean).eq('sector', sector).select().maybeSingle();
+  if (error) return { error: error.message };
+  return { sector: data };
+}
+
+async function seedSectors() {
+  const db = getAdminClient();
+  if (!db) return { error: 'no db' };
+  const rows = SECTOR_SEED.map(r => ({ ...r, updated_at: new Date().toISOString() }));
+  const { error } = await db.from('sectors').upsert(rows, { onConflict: 'sector' });
+  if (error) return { error: error.message };
+  return { seeded: rows.length };
+}
+
 async function getStaleCompanies(limit = 50) {
   try {
     const db = getAdminClient();
@@ -1032,4 +1070,6 @@ module.exports = {
   markIngested, updateCompany, deleteCompany, renameTickerCascade, getCoverage,
   // Phase 8: ratios + ranking
   upsertRatios, getRankingDataset,
+  // Phase 7: sector microtheories
+  listSectors, updateSector, seedSectors,
 };
