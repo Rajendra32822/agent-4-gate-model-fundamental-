@@ -16,36 +16,54 @@ const ontology = require('./ontology');
 
 const num = (v) => (v == null || !isFinite(v)) ? null : Number(v);
 
+// Build a { [sector]: benchmarkRow } lookup from sector rows.
+function toSectorMap(rows) {
+  const map = {};
+  for (const r of rows || []) {
+    if (r && r.sector) map[r.sector] = r;
+  }
+  return map;
+}
+
+// Pick the quality gate for a row's sector. ROE-primary sectors (banks, realty,
+// construction) gate on ROE; everyone else on ROCE at their sector threshold.
+// Unknown/missing sector → ROCE at the ontology default (15).
+function resolveQualityGate(row, sectorBenchmarks) {
+  const s = sectorBenchmarks?.[row.sector];
+  if (s && s.primary_metric === 'roe') {
+    return { metric: 'ROE', value: num(row.roe_5y_avg), benchmark: s.roe_benchmark };
+  }
+  return { metric: 'ROCE', value: num(row.roce_5y_avg), benchmark: s?.roce_benchmark ?? ontology.benchmark('roce') };
+}
+
 const STRATEGIES = {
   marshall_undervalued: {
     label: 'Marshall Undervalued',
     description: 'Quality businesses (ROCE ≥ 15%, low debt, growing profits) trading cheap (P/E ≤ 35).',
-    score(r) {
-      const roce = num(r.roce_5y_avg), de = num(r.debt_to_equity);
+    score(r, sectorBenchmarks) {
+      const gate = resolveQualityGate(r, sectorBenchmarks);
+      const de = num(r.debt_to_equity);
       const patCagr = num(r.pat_cagr_5y_pct), pe = num(r.pe);
       const revCagr = num(r.revenue_cagr_5y_pct) ?? 0;
-      const reasons = [];
-      const roceMin = ontology.benchmark('roce');
-      if (roce == null || roce < roceMin) return fail(`ROCE 5y < ${roceMin}%`);
+      if (gate.value == null || gate.value < gate.benchmark) return fail(`${gate.metric} 5y < ${gate.benchmark}%`);
       if (de == null || de > 0.5)    return fail('Debt/Equity > 0.5');
       if (patCagr == null || patCagr <= 0) return fail('PAT not growing');
       if (pe == null || pe <= 0 || pe > 35) return fail('P/E out of range (0-35]');
-      reasons.push(`ROCE ${roce}%`, `D/E ${de}`, `P/E ${pe}`, `Rev CAGR ${revCagr}%`);
-      return ok(((roce + revCagr) / pe), reasons);
+      const reasons = [`${gate.metric} ${gate.value}%`, `D/E ${de}`, `P/E ${pe}`, `Rev CAGR ${revCagr}%`];
+      return ok(((gate.value + revCagr) / pe), reasons);
     },
   },
   quality_compounders: {
     label: 'Quality Compounders',
     description: 'Highest return-on-capital businesses with strong growth and low debt — regardless of price.',
-    score(r) {
-      const roce = num(r.roce_5y_avg);
-      const roceMin = ontology.benchmark('roce');
-      if (roce == null || roce < roceMin) return fail(`ROCE 5y < ${roceMin}%`);
+    score(r, sectorBenchmarks) {
+      const gate = resolveQualityGate(r, sectorBenchmarks);
+      if (gate.value == null || gate.value < gate.benchmark) return fail(`${gate.metric} 5y < ${gate.benchmark}%`);
       const revCagr = num(r.revenue_cagr_5y_pct) ?? 0;
       const patCagr = num(r.pat_cagr_5y_pct) ?? 0;
       const de = num(r.debt_to_equity) ?? 0;
-      const s = roce * 0.5 + revCagr * 0.3 + patCagr * 0.3 - de * 5;
-      return ok(s, [`ROCE ${roce}%`, `Rev CAGR ${revCagr}%`, `PAT CAGR ${patCagr}%`]);
+      const s = gate.value * 0.5 + revCagr * 0.3 + patCagr * 0.3 - de * 5;
+      return ok(s, [`${gate.metric} ${gate.value}%`, `Rev CAGR ${revCagr}%`, `PAT CAGR ${patCagr}%`]);
     },
   },
   deep_value: {
@@ -78,18 +96,18 @@ function fail(reason) {
   return { passes: false, score: 0, reasons: [reason] };
 }
 
-function scoreRow(strategyKey, row) {
+function scoreRow(strategyKey, row, sectorBenchmarks) {
   const strat = STRATEGIES[strategyKey];
   if (!strat) return { passes: false, score: 0, reasons: ['unknown strategy'] };
-  return strat.score(row);
+  return strat.score(row, sectorBenchmarks);
 }
 
-function rankUniverse(strategyKey, rows, limit = 20) {
+function rankUniverse(strategyKey, rows, sectorBenchmarks = {}, limit = 20) {
   const strat = STRATEGIES[strategyKey];
   if (!strat || !Array.isArray(rows)) return [];
   const scored = [];
   for (const r of rows) {
-    const res = strat.score(r);
+    const res = strat.score(r, sectorBenchmarks);
     if (res.passes) scored.push({ ...r, score: res.score, reasons: res.reasons });
   }
   scored.sort((a, b) => b.score - a.score);
@@ -100,4 +118,4 @@ const STRATEGY_LIST = Object.entries(STRATEGIES).map(([key, s]) => ({
   key, label: s.label, description: s.description,
 }));
 
-module.exports = { scoreRow, rankUniverse, STRATEGY_LIST, STRATEGIES };
+module.exports = { scoreRow, rankUniverse, STRATEGY_LIST, STRATEGIES, toSectorMap, resolveQualityGate };

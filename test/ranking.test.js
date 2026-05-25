@@ -77,7 +77,7 @@ test('rankUniverse sorts desc by score and assigns ranks', () => {
 
 test('rankUniverse respects limit', () => {
   const rows = Array.from({ length: 30 }, (_, i) => row({ ticker: 'T' + i, roce_5y_avg: 16 + i }));
-  const ranked = rankUniverse('quality_compounders', rows, 5);
+  const ranked = rankUniverse('quality_compounders', rows, {}, 5);
   assert.equal(ranked.length, 5);
 });
 
@@ -101,4 +101,55 @@ test('marshall_undervalued ROCE gate uses the ontology benchmark', () => {
   const justOver  = { roce_5y_avg: min + 0.1, debt_to_equity: 0.2, pat_cagr_5y_pct: 10, pe: 20, revenue_cagr_5y_pct: 12 };
   assert.equal(scoreRow('marshall_undervalued', justUnder).passes, false);
   assert.equal(scoreRow('marshall_undervalued', justOver).passes, true);
+});
+
+// ── Phase 7: sector-aware gating ──
+const { toSectorMap, resolveQualityGate } = require('../ranking');
+
+const SECTORS = toSectorMap([
+  { sector: 'Information Technology', primary_metric: 'roce', roce_benchmark: 30, roe_benchmark: 20 },
+  { sector: 'Financial Services',     primary_metric: 'roe',  roce_benchmark: null, roe_benchmark: 15 },
+]);
+
+test('toSectorMap keys rows by sector', () => {
+  assert.equal(SECTORS['Information Technology'].roce_benchmark, 30);
+  assert.equal(SECTORS['Financial Services'].primary_metric, 'roe');
+});
+
+test('resolveQualityGate uses ROE for roe-primary sectors', () => {
+  const g = resolveQualityGate({ sector: 'Financial Services', roe_5y_avg: 18, roce_5y_avg: 4 }, SECTORS);
+  assert.equal(g.metric, 'ROE');
+  assert.equal(g.value, 18);
+  assert.equal(g.benchmark, 15);
+});
+
+test('resolveQualityGate uses ROCE at the sector threshold', () => {
+  const g = resolveQualityGate({ sector: 'Information Technology', roce_5y_avg: 28 }, SECTORS);
+  assert.equal(g.metric, 'ROCE');
+  assert.equal(g.benchmark, 30);
+});
+
+test('resolveQualityGate falls back to ROCE 15 for unknown/missing sector', () => {
+  assert.equal(resolveQualityGate({ sector: 'Nonexistent', roce_5y_avg: 20 }, SECTORS).benchmark, 15);
+  assert.equal(resolveQualityGate({ sector: 'X', roce_5y_avg: 20 }, undefined).benchmark, 15);
+});
+
+test('IT name needs ROCE 30 under sector benchmarks', () => {
+  const itLow  = { sector: 'Information Technology', roce_5y_avg: 25, debt_to_equity: 0.1, pat_cagr_5y_pct: 10, pe: 20, revenue_cagr_5y_pct: 12 };
+  const itHigh = { sector: 'Information Technology', roce_5y_avg: 32, debt_to_equity: 0.1, pat_cagr_5y_pct: 10, pe: 20, revenue_cagr_5y_pct: 12 };
+  assert.equal(scoreRow('marshall_undervalued', itLow,  SECTORS).passes, false); // 25 < 30
+  assert.equal(scoreRow('marshall_undervalued', itHigh, SECTORS).passes, true);  // 32 >= 30
+});
+
+test('bank passes quality_compounders on ROE, not ROCE', () => {
+  const bank = { sector: 'Financial Services', roce_5y_avg: 3, roe_5y_avg: 18, revenue_cagr_5y_pct: 14, pat_cagr_5y_pct: 16, debt_to_equity: 0 };
+  const res = scoreRow('quality_compounders', bank, SECTORS);
+  assert.equal(res.passes, true);
+  assert.match(res.reasons[0], /ROE 18%/);
+});
+
+test('empty/undefined sector map reproduces flat ROCE-15 behavior', () => {
+  const r = { sector: 'Anything', roce_5y_avg: 14, debt_to_equity: 0.1, pat_cagr_5y_pct: 10, pe: 20, revenue_cagr_5y_pct: 12 };
+  assert.equal(scoreRow('marshall_undervalued', r).passes, false);          // 14 < 15
+  assert.equal(scoreRow('marshall_undervalued', { ...r, roce_5y_avg: 16 }).passes, true);
 });
