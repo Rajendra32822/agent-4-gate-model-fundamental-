@@ -14,6 +14,7 @@ const { computeOutcome } = require('./outcomes');
 const { fetchYahooPrice } = require('./priceCheck');
 const { ingestCompany } = require('./ingestion/orchestrator');
 const { runBulkIngestion, getBulkState } = require('./ingestion/bulkRunner');
+const { runDailyPricesIngestion, getDailyPricesState } = require('./ingestion/dailyPricesRunner');
 const fsPromises = require('fs').promises;
 const pathMod = require('path');
 const {
@@ -39,6 +40,7 @@ const {
   createCorporateAction, getCorporateAction, listCorporateActions, listCorporateActionsByStatus,
   updateCorporateAction, setCorporateActionStatus, applyTickerChange, updateCompanyName,
   captureCorporateActionFromAnalysis,
+  getLastPriceDate, upsertDailyPrices, getActiveTickersInUniverse,
 } = require('./db');
 const { rankUniverse, STRATEGY_LIST, toSectorMap } = require('./ranking');
 const { validateConfirm, EVENT_TYPES } = require('./corporateActions');
@@ -879,6 +881,20 @@ app.post('/api/cron/ingest-universe', async (req, res) => {
   const tickers = await getStaleCompanies(batch);
   runBulkIngestion(tickers, INGEST_DB_HELPERS).catch(e => console.error('cron bulk error:', e.message));
   res.json({ started: true, batch: tickers.length });
+});
+
+app.post('/api/cron/ingest-daily-prices', async (req, res) => {
+  const secret = req.headers['x-cron-secret'];
+  if (!secret || secret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (getDailyPricesState().running) {
+    return res.status(409).json({ error: 'Already running' });
+  }
+  const tickers = await getActiveTickersInUniverse();
+  runDailyPricesIngestion(tickers, { getLastPriceDate, upsertDailyPrices })
+    .catch(e => console.error('[cron] daily prices error:', e.message));
+  res.status(202).json({ started: true, tickers: tickers.length });
 });
 
 // ─── Admin: backfill analysis outcomes (historical returns) ──────────────────
