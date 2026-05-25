@@ -1183,6 +1183,26 @@ async function getCoverage() {
   }
 }
 
+async function corporateActionExists(ticker, eventType, exDate) {
+  try {
+    const db = getAdminClient();
+    if (!db) return false;
+    const { data, error } = await db
+      .from('corporate_actions')
+      .select('id')
+      .eq('ticker', ticker.toUpperCase())
+      .eq('event_type', eventType)
+      .eq('ex_date', exDate)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data != null;
+  } catch (err) {
+    console.error('corporateActionExists error:', err.message);
+    return false;
+  }
+}
+
 // ─── Daily prices ─────────────────────────────────────────────────────────────
 
 async function getLastPriceDate(ticker) {
@@ -1277,6 +1297,7 @@ module.exports = {
   createCorporateAction, getCorporateAction, listCorporateActions, listCorporateActionsByStatus,
   updateCorporateAction, setCorporateActionStatus,
   applyTickerChange, writeTickerHistory, updateCompanyName, resolveTicker, captureCorporateActionFromAnalysis,
+  corporateActionExists,
   // Daily prices
   getLastPriceDate, upsertDailyPrices, getActiveTickersInUniverse,
 };
