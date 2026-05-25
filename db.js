@@ -48,6 +48,7 @@ async function getAnalysis(ticker) {
   try {
     const db = getAdminClient();
     if (!db) return null;
+    ticker = await resolveTicker(ticker);
     const { data, error } = await db
       .from('analyses').select('data, saved_at')
       .eq('ticker', ticker.toUpperCase())
@@ -759,7 +760,7 @@ async function upsertAggregates(row) {
 async function getCompanyBundle(ticker) {
   const db = getAdminClient();
   if (!db) return null;
-  const T = ticker.toUpperCase();
+  const T = (await resolveTicker(ticker)).toUpperCase();
   try {
     const [companyRes, plRes, bsRes, cfRes, qRes, dAnnualRes, dQRes, aggRes, shRes] = await Promise.all([
       db.from('companies').select('*').eq('ticker', T).maybeSingle(),
