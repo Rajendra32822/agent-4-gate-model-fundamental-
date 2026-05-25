@@ -1183,6 +1183,70 @@ async function getCoverage() {
   }
 }
 
+// ─── Daily prices ─────────────────────────────────────────────────────────────
+
+async function getLastPriceDate(ticker) {
+  try {
+    const db = getAdminClient();
+    if (!db) return null;
+    const { data, error } = await db
+      .from('daily_prices')
+      .select('date')
+      .eq('ticker', ticker.toUpperCase())
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data?.date ?? null;
+  } catch (err) {
+    console.error('getLastPriceDate error:', err.message);
+    return null;
+  }
+}
+
+async function upsertDailyPrices(rows) {
+  try {
+    const db = getAdminClient();
+    if (!db || !rows?.length) return false;
+    const { error } = await db.from('daily_prices').upsert(
+      rows.map(r => ({
+        ticker:     r.ticker.toUpperCase(),
+        date:       r.date,
+        open:       r.open,
+        high:       r.high,
+        low:        r.low,
+        close:      r.close,
+        adj_close:  r.adjClose,
+        volume:     r.volume,
+        fetched_at: new Date().toISOString(),
+      })),
+      { onConflict: 'ticker,date' }
+    );
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('upsertDailyPrices error:', err.message);
+    return false;
+  }
+}
+
+async function getActiveTickersInUniverse() {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db
+      .from('companies')
+      .select('ticker')
+      .eq('is_active', true)
+      .order('ticker');
+    if (error) throw error;
+    return (data || []).map(r => r.ticker);
+  } catch (err) {
+    console.error('getActiveTickersInUniverse error:', err.message);
+    return [];
+  }
+}
+
 module.exports = {
   connectDB, saveAnalysis, getAnalysis, getAllAnalyses, getAnalysisHistory, deleteAnalysis,
   getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist, getCurrentQuarter,
@@ -1213,4 +1277,6 @@ module.exports = {
   createCorporateAction, getCorporateAction, listCorporateActions, listCorporateActionsByStatus,
   updateCorporateAction, setCorporateActionStatus,
   applyTickerChange, writeTickerHistory, updateCompanyName, resolveTicker, captureCorporateActionFromAnalysis,
+  // Daily prices
+  getLastPriceDate, upsertDailyPrices, getActiveTickersInUniverse,
 };

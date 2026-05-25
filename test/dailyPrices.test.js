@@ -84,3 +84,26 @@ test('fetchYahooDailyPrices: maps rangeDays to Yahoo range param correctly', asy
   assert.ok(urls[1].includes('range=2y'), `expected range=2y in ${urls[1]}`);
   assert.ok(urls[2].includes('range=5y'), `expected range=5y in ${urls[2]}`);
 });
+
+// ─── rangeDaysFor ─────────────────────────────────────────────────────────────
+
+const { rangeDaysFor } = require('../ingestion/dailyPricesRunner');
+
+test('rangeDaysFor: null → 730 (full 2-year backfill)', () => {
+  assert.equal(rangeDaysFor(null), 730);
+});
+
+test('rangeDaysFor: undefined → 730', () => {
+  assert.equal(rangeDaysFor(undefined), 730);
+});
+
+test('rangeDaysFor: date before today → 7 (incremental)', () => {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  assert.equal(rangeDaysFor(yesterday.toISOString().split('T')[0]), 7);
+});
+
+test('rangeDaysFor: today → 0 (skip, already up to date)', () => {
+  const today = new Date().toISOString().split('T')[0];
+  assert.equal(rangeDaysFor(today), 0);
+});
