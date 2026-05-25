@@ -102,6 +102,24 @@ function buildLiveMarketBlock(quote) {
   return lines.join('\n');
 }
 
+// Build an authoritative sector-benchmark block for the prompt. Returns null if
+// the company has no classified sector or no matching benchmark row.
+function buildSectorBenchmarkBlock(companyName, sector, sectorRow) {
+  if (!sector || !sectorRow) return null;
+  const roe = sectorRow.primary_metric === 'roe';
+  const metric = roe ? 'ROE' : 'ROCE';
+  const bench = roe ? sectorRow.roe_benchmark : sectorRow.roce_benchmark;
+  if (bench == null) return null;
+  return [
+    '=== SECTOR BENCHMARK (ValueSight microtheory — AUTHORITATIVE for this company) ===',
+    `${companyName} is classified under sector: ${sector}.`,
+    `Marshall quality gate for this sector: ${metric} >= ${bench}%.`,
+    "Apply THIS threshold in Gate 2A — do not use a generic 15% or another sector's number.",
+    roe ? 'This is a financial/asset-heavy sector — assess ROE (not ROCE) as the primary return metric.' : '',
+    '=== END SECTOR BENCHMARK ===',
+  ].filter(Boolean).join('\n');
+}
+
 /**
  * Calls the analysis model.
  * Standard (default): free OpenRouter model only — zero Anthropic credits consumed.
@@ -571,6 +589,18 @@ async function runMarshallAnalysis(ticker, companyName, onProgress, opts = {}) {
     const liveMarketBlock = buildLiveMarketBlock(liveQuote);
     if (liveMarketBlock) console.log(`📈 Live price anchor for ${ticker}: ₹${liveQuote.price}`);
 
+    // Sector microtheory: tell the AI this company's sector-specific quality gate.
+    let sectorBlock = null;
+    try {
+      const sector = bundle?.company?.sector;
+      if (sector) {
+        const { listSectors } = require('./db');
+        const sectorRow = (await listSectors()).find(s => s.sector === sector);
+        sectorBlock = buildSectorBenchmarkBlock(companyName, sector, sectorRow);
+        if (sectorBlock) console.log(`🏭 Sector benchmark for ${ticker}: ${sector}`);
+      }
+    } catch (e) { console.error('Sector benchmark lookup failed:', e.message); }
+
     // Standard analysis skips web searches entirely (free tier).
     // Deep analysis runs all 5 searches via Haiku + Perplexity Sonar.
     let rawData = [];
@@ -595,7 +625,7 @@ Analyse ${companyName} (${ticker}, listed on NSE/BSE India) using Marshall's com
 
 Financial and business data gathered:
 
-${structuredContext ? structuredContext + '\n\n' : ''}${liveMarketBlock ? liveMarketBlock + '\n\n' : ''}${dataContext}
+${structuredContext ? structuredContext + '\n\n' : ''}${liveMarketBlock ? liveMarketBlock + '\n\n' : ''}${sectorBlock ? sectorBlock + '\n\n' : ''}${dataContext}
 
 Today's date: ${new Date().toISOString().split('T')[0]}
 
