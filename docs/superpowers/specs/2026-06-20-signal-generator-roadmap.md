@@ -66,13 +66,13 @@ CREATE INDEX IF NOT EXISTS idx_trade_signals_status ON trade_signals (status);
 
 ## 3. Sprint-Wise Execution Plan
 
-### Sprint 1: Technical Indicators Engine & Ingestion (1 Week)
+### Sprint 1: Technical Indicators Engine & Ingestion (1 Week) - ✅ COMPLETED
 * **Goal:** Implement the math and calculations for all required technical indicators, storing daily indicators in the DB.
 * **Tasks:**
-  - **[NEW] `platform/technicals.js`:** Pure helper functions to calculate RSI, EMA, SMA, and MACD from a series of historical close prices.
-  - **[NEW] `test/technicals.test.js`:** Write TDD unit tests verifying indicator math against standard market data values.
-  - **[MODIFY] `ingestion/dailyPricesRunner.js`:** Enhance price ingestion to automatically calculate daily technicals for each active ticker and upsert them to `company_technicals`.
-  - **[MODIFY] `index.js`:** Add database helper endpoints to query technical records.
+  - [x] **[NEW] `platform/technicals.js`:** Pure helper functions to calculate RSI, EMA, SMA, and MACD from a series of historical close prices.
+  - [x] **[NEW] `test/technicals.test.js`:** Write TDD unit tests verifying indicator math against standard market data values.
+  - [x] **[MODIFY] `ingestion/dailyPricesRunner.js`:** Enhance price ingestion to automatically calculate daily technicals for each active ticker and upsert them to `company_technicals`.
+  - [x] **[MODIFY] `index.js`:** Add database helper endpoints to query technical records.
 
 ### Sprint 2: Combined Signal Engine & Telegram Alerting (1 Week)
 * **Goal:** Build the signal generation logic that joins fundamentals with technical triggers, dispatching alerts.

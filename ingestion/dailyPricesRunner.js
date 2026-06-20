@@ -1,4 +1,5 @@
 const { fetchYahooDailyPrices } = require('../priceCheck');
+const { calculateTechnicalsForSeries } = require('../platform/technicals');
 
 const dailyPricesState = {
   running:    false,
@@ -67,6 +68,15 @@ async function runDailyPricesIngestion(tickers, db, opts = {}) {
       const rows = await fetchFn(ticker, rangeDays);
       if (rows.length > 0) {
         await db.upsertDailyPrices(rows.map(r => ({ ...r, ticker })));
+        if (typeof db.getDailyPricesHistory === 'function' && typeof db.saveCompanyTechnicals === 'function') {
+          const history = await db.getDailyPricesHistory(ticker, 250);
+          if (history && history.length > 0) {
+            const technicals = calculateTechnicalsForSeries(history);
+            if (technicals && technicals.length > 0) {
+              await db.saveCompanyTechnicals(technicals.map(t => ({ ...t, ticker })));
+            }
+          }
+        }
       }
       dailyPricesState.done++;
     } catch (err) {

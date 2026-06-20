@@ -1441,6 +1441,75 @@ async function getPaperBookDaily(strategyKey) {
   }
 }
 
+// ─── Technical Indicators ─────────────────────────────────────────────────────
+
+async function saveCompanyTechnicals(rows) {
+  try {
+    const db = getAdminClient();
+    if (!db || !rows?.length) return false;
+    const { error } = await db.from('company_technicals').upsert(
+      rows.map(r => ({
+        ticker:      r.ticker.toUpperCase(),
+        date:        r.date,
+        rsi:         r.rsi,
+        ema_20:      r.ema_20,
+        sma_50:      r.sma_50,
+        sma_200:     r.sma_200,
+        macd:        r.macd,
+        macd_signal: r.macd_signal,
+        macd_hist:   r.macd_hist,
+        bb_upper:    r.bb_upper,
+        bb_lower:    r.bb_lower,
+        volume_ema:  r.volume_ema,
+        obv:         r.obv
+      })),
+      { onConflict: 'ticker,date' }
+    );
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('saveCompanyTechnicals error:', err.message);
+    return false;
+  }
+}
+
+async function getLatestTechnicals(ticker) {
+  try {
+    const db = getAdminClient();
+    if (!db) return null;
+    const { data, error } = await db
+      .from('company_technicals')
+      .select('*')
+      .eq('ticker', ticker.toUpperCase())
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('getLatestTechnicals error:', err.message);
+    return null;
+  }
+}
+
+async function getDailyPricesHistory(ticker, limit = 250) {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db
+      .from('daily_prices')
+      .select('date, close, volume')
+      .eq('ticker', ticker.toUpperCase())
+      .order('date', { ascending: true }) // ASC for chronological technical calculations
+      .limit(limit);
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('getDailyPricesHistory error:', err.message);
+    return [];
+  }
+}
+
 module.exports = {
   connectDB, checkConnection, saveAnalysis, getAnalysis, getAllAnalyses, getAnalysisHistory, deleteAnalysis,
   getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist, getCurrentQuarter,
@@ -1476,4 +1545,6 @@ module.exports = {
   getLastPriceDate, getPriceOnDate, upsertDailyPrices, getActiveTickersInUniverse,
   // Paper Trading (Phase 2)
   getPaperBookMeta, savePaperBookMeta, getPaperTrades, savePaperTrades, savePaperBookDaily, getPaperBookDaily,
+  // Technicals (Sprint 1)
+  saveCompanyTechnicals, getLatestTechnicals, getDailyPricesHistory,
 };

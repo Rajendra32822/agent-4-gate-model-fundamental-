@@ -43,6 +43,7 @@ const {
   captureCorporateActionFromAnalysis, corporateActionExists,
   getLastPriceDate, getPriceOnDate, upsertDailyPrices, getActiveTickersInUniverse,
   getPaperBookMeta, savePaperBookMeta, getPaperTrades, savePaperTrades, savePaperBookDaily, getPaperBookDaily,
+  getDailyPricesHistory, saveCompanyTechnicals,
 } = require('./db');
 const { rankUniverse, STRATEGY_LIST, toSectorMap } = require('./ranking');
 const { sendAlert } = require('./platform/alerting');
@@ -930,7 +931,7 @@ app.post('/api/cron/ingest-daily-prices', async (req, res) => {
     tickers.push('^NSEI');
   }
   
-  runDailyPricesIngestion(tickers, { getLastPriceDate, upsertDailyPrices })
+  runDailyPricesIngestion(tickers, { getLastPriceDate, upsertDailyPrices, getDailyPricesHistory, saveCompanyTechnicals })
     .then(async (result) => {
       await sendAlert(`✅ *Daily Prices Ingestion Heartbeat*\nTickers processed: ${result.done}\nFailed: ${result.failed}\nSkipped: ${result.skipped}`);
     })
