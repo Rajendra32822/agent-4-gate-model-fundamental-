@@ -1325,6 +1325,37 @@ app.get('/api/paper-trading/stats', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/trade-signals', requireAuth, async (req, res) => {
+  try {
+    const dbClient = supabaseAdmin;
+    if (!dbClient) return res.status(500).json({ error: 'Database client not initialized' });
+    const { data, error } = await dbClient
+      .from('trade_signals')
+      .select('*')
+      .order('date', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/trade-signals/:id/status', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  if (!['PENDING', 'EXECUTED', 'DISMISSED'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+  try {
+    const success = await updateSignalStatus(id, status);
+    if (!success) return res.status(404).json({ error: 'Signal not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Load demo analyses on startup ───────────────────────────────────────────
 const DEMO_ANALYSES = require('./demoAnalyses');
 async function loadDemoAnalyses() {

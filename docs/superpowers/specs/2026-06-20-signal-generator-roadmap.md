@@ -83,16 +83,16 @@ CREATE INDEX IF NOT EXISTS idx_trade_signals_status ON trade_signals (status);
   - [x] **[NEW] `test/signalEngine.test.js`:** Assert buy/sell triggers execute correctly given mock fundamentals and technical metrics.
   - [x] **[MODIFY] `index.js`:** Wire a nightly cron check that runs the signal engine after ingestion, creates `trade_signals` records, and pushes structured Telegram alerts (e.g. *"🚨 BUY SIGNAL: TCS. Rank 2 in Marshall Undervalued. RSI at 32.2. Price > 200 SMA. CMP ₹3,150. Consider buying."*).
 
-### Sprint 3: Signal Center UI Dashboard & Basket Export (1 Week)
+### Sprint 3: Signal Center UI Dashboard & Basket Export (1 Week) - ✅ COMPLETED
 * **Goal:** Design the frontend workspace to manage signals, mark execution, and export order baskets.
 * **Tasks:**
-  - **[NEW] `client/src/pages/SignalCenter.js`:** Premium React dashboard containing:
+  - [x] **[NEW] `client/src/pages/SignalCenter.js`:** Premium React dashboard containing:
     - *Active Signals Panel:* Shows buy/sell suggestions, reasons, and a status action dropdown.
     - *Historical Signals Log:* Searchable audit trail of past suggestions.
-  - **[NEW] `client/src/utils/basketExporter.js`:** Utility to convert pending signals into CSV formats matching:
+  - [x] **[NEW] `client/src/utils/basketExporter.js`:** Utility to convert pending signals into CSV formats matching:
     - **Zerodha Kite:** `TICKER,EXCHANGE,TRANSACTION_TYPE,PRODUCT,ORDER_TYPE,QUANTITY,PRICE` (e.g. `TCS,NSE,BUY,CNC,LIMIT,31,3150`).
     - **AngelOne:** Matching their basket template.
-  - **[MODIFY] `client/src/App.js`:** Add "Signal Center" route and nav button.
+  - [x] **[MODIFY] `client/src/App.js`:** Add "Signal Center" route and nav button.
 
 ### Sprint 4: Advanced Verification & Backtester Harness (1 Week)
 * **Goal:** Add Bollinger Bands and volume checks, and write a backtesting harness to check historical win rates.
