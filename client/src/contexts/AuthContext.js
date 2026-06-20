@@ -3,7 +3,7 @@ import supabase from '../lib/supabase';
 import authFetch from '../lib/api';
 import { setAccessToken } from '../lib/tokenStore';
 
-const ADMIN_EMAIL = 'rajendraamilineni@gmail.com';
+const ADMIN_EMAIL = 'rajendra.amil@gmail.com';
 
 const AuthContext = createContext(null);
 

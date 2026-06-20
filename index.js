@@ -59,7 +59,7 @@ const INGEST_DB_HELPERS = {
 const app = express();
 const cache = new NodeCache({ stdTTL: 3600 });
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'rajendraamilineni@gmail.com';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'rajendra.amil@gmail.com';
 
 // ─── Supabase admin client ────────────────────────────────────────────────────
 const supabaseAdmin = createClient(
