@@ -5,6 +5,8 @@ const {
   calculateEMA,
   calculateRSI,
   calculateMACD,
+  calculateBollingerBands,
+  calculateOBV,
   calculateTechnicalsForSeries
 } = require('../platform/technicals');
 
@@ -96,4 +98,26 @@ test('calculateTechnicalsForSeries: builds a complete metrics object per day', (
   assert.ok(results[59].ema_20 !== null);
   assert.ok(results[59].sma_50 !== null);
   assert.ok(results[59].macd !== null);
+  assert.ok(results[59].bb_upper !== null);
+  assert.ok(results[59].obv !== null);
+});
+
+test('calculateBollingerBands: computes Bollinger Bands upper/lower correctly', () => {
+  const prices = [];
+  for (let i = 0; i < 25; i++) {
+    prices.push(100);
+  }
+  const { upper, lower } = calculateBollingerBands(prices, 20, 2);
+  assert.equal(upper.length, 25);
+  assert.equal(lower.length, 25);
+  assert.equal(upper[18], null);
+  assert.equal(upper[19], 100);
+  assert.equal(lower[19], 100);
+});
+
+test('calculateOBV: computes On Balance Volume series correctly', () => {
+  const closes = [10, 11, 10, 10, 12];
+  const volumes = [100, 200, 150, 300, 400];
+  const obv = calculateOBV(closes, volumes);
+  assert.deepEqual(obv, [100, 300, 150, 150, 550]);
 });

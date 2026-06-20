@@ -153,6 +153,59 @@ function calculateMACD(prices, fastPeriod = 12, slowPeriod = 26, signalPeriod = 
   return { macd, signal, hist };
 }
 
+function calculateBollingerBands(values, period = 20, multiplier = 2) {
+  const upper = new Array(values.length).fill(null);
+  const lower = new Array(values.length).fill(null);
+
+  let startIdx = 0;
+  while (startIdx < values.length && values[startIdx] === null) {
+    startIdx++;
+  }
+
+  if (values.length - startIdx < period) return { upper, lower };
+
+  for (let i = startIdx + period - 1; i < values.length; i++) {
+    const slice = values.slice(i - period + 1, i + 1);
+    const mean = slice.reduce((sum, v) => sum + v, 0) / period;
+    const variance = slice.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / period;
+    const stdDev = Math.sqrt(variance);
+    upper[i] = Number((mean + multiplier * stdDev).toFixed(4));
+    lower[i] = Number((mean - multiplier * stdDev).toFixed(4));
+  }
+
+  return { upper, lower };
+}
+
+function calculateOBV(closes, volumes) {
+  const obv = new Array(closes.length).fill(null);
+
+  let startIdx = 0;
+  while (startIdx < closes.length && closes[startIdx] === null) {
+    startIdx++;
+  }
+
+  if (startIdx >= closes.length) return obv;
+
+  let currentObv = volumes[startIdx] || 0;
+  obv[startIdx] = currentObv;
+
+  for (let i = startIdx + 1; i < closes.length; i++) {
+    const todayClose = closes[i];
+    const yesterdayClose = closes[i - 1];
+    const todayVolume = volumes[i] || 0;
+
+    if (todayClose > yesterdayClose) {
+      currentObv += todayVolume;
+    } else if (todayClose < yesterdayClose) {
+      currentObv -= todayVolume;
+    }
+
+    obv[i] = currentObv;
+  }
+
+  return obv;
+}
+
 /**
  * Calculates a complete set of technical indicators for a historical series.
  *
@@ -163,22 +216,30 @@ function calculateTechnicalsForSeries(dailyPrices) {
   if (!dailyPrices || dailyPrices.length === 0) return [];
 
   const closes = dailyPrices.map(d => d.close);
+  const volumes = dailyPrices.map(d => d.volume || 0);
   
   const rsi = calculateRSI(closes, 14);
   const ema20 = calculateEMA(closes, 20);
   const sma50 = calculateSMA(closes, 50);
   const sma200 = calculateSMA(closes, 200);
   const { macd, signal, hist } = calculateMACD(closes, 12, 26, 9);
+  const { upper: bbUpper, lower: bbLower } = calculateBollingerBands(closes, 20, 2);
+  const obv = calculateOBV(closes, volumes);
 
   return dailyPrices.map((d, i) => ({
     date: d.date,
+    close: d.close,
+    volume: d.volume || 0,
     rsi: rsi[i],
     ema_20: ema20[i],
     sma_50: sma50[i],
     sma_200: sma200[i],
     macd: macd[i],
     macd_signal: signal[i],
-    macd_hist: hist[i]
+    macd_hist: hist[i],
+    bb_upper: bbUpper[i],
+    bb_lower: bbLower[i],
+    obv: obv[i]
   }));
 }
 
@@ -187,5 +248,7 @@ module.exports = {
   calculateEMA,
   calculateRSI,
   calculateMACD,
+  calculateBollingerBands,
+  calculateOBV,
   calculateTechnicalsForSeries
 };

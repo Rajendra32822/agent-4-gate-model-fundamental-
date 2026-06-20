@@ -14,6 +14,7 @@ import Portfolio from './pages/Portfolio';
 import Rankings from './pages/Rankings';
 import StrategyLab from './pages/StrategyLab';
 import SignalCenter from './pages/SignalCenter';
+import BacktestPanel from './pages/BacktestPanel';
 import authFetch from './lib/api';
 import './styles/global.css';
 
@@ -201,6 +202,9 @@ function AppRouter() {
         {page === 'signals' && (
           <SignalCenter onSelectStock={(ticker) => navigateTo('analysis', ticker)} />
         )}
+        {page === 'backtest' && (
+          <BacktestPanel />
+        )}
         {page === 'profile' && (
           <Profile onSelectStock={(ticker) => navigateTo('analysis', ticker)} />
         )}
@@ -256,6 +260,9 @@ function Header({ page, onNavigate, isAdmin, profile, onSignOut, unreadAlerts, o
           </button>
           <button className={`nav-btn ${page === 'signals' ? 'active' : ''}`} onClick={() => onNavigate('signals')}>
             Signal Center
+          </button>
+          <button className={`nav-btn ${page === 'backtest' ? 'active' : ''}`} onClick={() => onNavigate('backtest')}>
+            Backtest
           </button>
           <button className={`nav-btn ${page === 'portfolio' ? 'active' : ''}`} onClick={() => onNavigate('portfolio')}>
             Portfolio

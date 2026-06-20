@@ -49,6 +49,7 @@ const {
 const { rankUniverse, STRATEGY_LIST, toSectorMap } = require('./ranking');
 const { sendAlert } = require('./platform/alerting');
 const { checkSignalsForTicker } = require('./platform/signalEngine');
+const { runStrategyBacktest } = require('./platform/backtest');
 const { decideExits, decideEntries, applyTick, computeBookMetrics } = require('./platform/paperTrade');
 const { validateConfirm, EVENT_TYPES } = require('./corporateActions');
 
@@ -1351,6 +1352,30 @@ app.put('/api/trade-signals/:id/status', requireAuth, async (req, res) => {
     const success = await updateSignalStatus(id, status);
     if (!success) return res.status(404).json({ error: 'Signal not found' });
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/backtest', requireAuth, async (req, res) => {
+  const { strategyKey, allocation } = req.body;
+  const strategies = ['marshall_undervalued', 'quality_compounders', 'deep_value', 'high_growth'];
+  if (!strategies.includes(strategyKey)) {
+    return res.status(400).json({ error: 'Invalid strategyKey' });
+  }
+  const allocAmt = Number(allocation) || 100000;
+  try {
+    const rankingDataset = await getRankingDataset();
+    if (!rankingDataset || rankingDataset.length === 0) {
+      return res.json({ summary: { totalTrades: 0, winRatePct: 0, netPnl: 0, returnPct: 0, maxDrawdownPct: 0 }, equityCurve: [], closedTrades: [], openPositions: [] });
+    }
+    const sectorRows = await listSectors();
+    const sectorMap = toSectorMap(sectorRows);
+    const ranked = rankUniverse(strategyKey, rankingDataset, sectorMap, 15);
+    const tickers = ranked.map(r => r.ticker.toUpperCase());
+
+    const result = await runStrategyBacktest(tickers, { getDailyPricesHistory }, allocAmt);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

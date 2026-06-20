@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-20  
 **Authors:** Antigravity & Rajendra  
-**Status:** PROPOSED (Awaiting final approval)  
+**Status:** APPROVED & COMPLETED  
 
 ---
 
@@ -94,9 +94,10 @@ CREATE INDEX IF NOT EXISTS idx_trade_signals_status ON trade_signals (status);
     - **AngelOne:** Matching their basket template.
   - [x] **[MODIFY] `client/src/App.js`:** Add "Signal Center" route and nav button.
 
-### Sprint 4: Advanced Verification & Backtester Harness (1 Week)
+### Sprint 4: Advanced Verification & Backtester Harness (1 Week) - ✅ COMPLETED
 * **Goal:** Add Bollinger Bands and volume checks, and write a backtesting harness to check historical win rates.
 * **Tasks:**
-  - **[MODIFY] `platform/technicals.js`:** Add Bollinger Bands (upper/lower channel) and OBV calculations.
-  - **[NEW] `platform/backtest.js`:** Add a local simulator that replays past 2-year prices, calculating what the returns, win rate, and drawdown would have been if the user had executed every signal.
-  - **[NEW] `client/src/pages/BacktestPanel.js`:** Simple admin panel UI to run and view backtest reports.
+  - [x] **[MODIFY] `platform/technicals.js`:** Add Bollinger Bands (upper/lower channel) and OBV calculations.
+  - [x] **[NEW] `platform/backtest.js`:** Add a local simulator that replays past 2-year prices, calculating what the returns, win rate, and drawdown would have been if the user had executed every signal.
+  - [x] **[NEW] `client/src/pages/BacktestPanel.js`:** Simple admin panel UI to run and view backtest reports.
+
