@@ -43,7 +43,6 @@ const {
   captureCorporateActionFromAnalysis, corporateActionExists,
   getLastPriceDate, getPriceOnDate, upsertDailyPrices, getActiveTickersInUniverse,
   getPaperBookMeta, savePaperBookMeta, getPaperTrades, savePaperTrades, savePaperBookDaily, getPaperBookDaily,
-  listSectors,
 } = require('./db');
 const { rankUniverse, STRATEGY_LIST, toSectorMap } = require('./ranking');
 const { sendAlert } = require('./platform/alerting');
