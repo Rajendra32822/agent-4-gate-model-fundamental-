@@ -44,9 +44,11 @@ const {
   getLastPriceDate, getPriceOnDate, upsertDailyPrices, getActiveTickersInUniverse,
   getPaperBookMeta, savePaperBookMeta, getPaperTrades, savePaperTrades, savePaperBookDaily, getPaperBookDaily,
   getDailyPricesHistory, saveCompanyTechnicals,
+  getCompanyTechnicals, saveTradeSignals, getPendingSignals, updateSignalStatus,
 } = require('./db');
 const { rankUniverse, STRATEGY_LIST, toSectorMap } = require('./ranking');
 const { sendAlert } = require('./platform/alerting');
+const { checkSignalsForTicker } = require('./platform/signalEngine');
 const { decideExits, decideEntries, applyTick, computeBookMetrics } = require('./platform/paperTrade');
 const { validateConfirm, EVENT_TYPES } = require('./corporateActions');
 
@@ -918,6 +920,88 @@ app.post('/api/cron/ingest-universe', async (req, res) => {
   res.json({ started: true, batch: tickers.length });
 });
 
+async function runSignalGenerationCheck(tickers) {
+  try {
+    const rankingDataset = await getRankingDataset();
+    if (!rankingDataset || rankingDataset.length === 0) return;
+
+    const companyNames = {};
+    for (const r of rankingDataset) {
+      companyNames[r.ticker] = r.company || r.name || r.ticker;
+    }
+
+    const strategies = ['marshall_undervalued', 'quality_compounders', 'deep_value', 'high_growth'];
+    
+    // 1. Sector benchmarks
+    const sectorRows = await listSectors();
+    const sectorMap = toSectorMap(sectorRows);
+
+    // 2. Compute rankings top-15
+    const top15ByStrategy = {};
+    for (const key of strategies) {
+      const ranked = rankUniverse(key, rankingDataset, sectorMap, 15);
+      top15ByStrategy[key] = ranked.map(r => r.ticker.toUpperCase());
+    }
+
+    // 3. Get open positions
+    const openByStrategy = {};
+    for (const key of strategies) {
+      const openTrades = await getPaperTrades(key, 'OPEN');
+      openByStrategy[key] = openTrades.map(t => t.ticker.toUpperCase());
+    }
+
+    // 4. Generate signals for each ticker
+    for (const ticker of tickers) {
+      if (ticker.startsWith('^')) continue; // Skip index tickers
+
+      const rankedStrategies = [];
+      const openStrategies = [];
+
+      for (const key of strategies) {
+        if (top15ByStrategy[key]?.includes(ticker.toUpperCase())) {
+          rankedStrategies.push(key);
+        }
+        if (openByStrategy[key]?.includes(ticker.toUpperCase())) {
+          openStrategies.push(key);
+        }
+      }
+
+      if (rankedStrategies.length === 0 && openStrategies.length === 0) continue;
+
+      const technicals = await getCompanyTechnicals(ticker, 2);
+      if (!technicals || technicals.length === 0) continue;
+
+      const signals = checkSignalsForTicker(ticker, technicals, rankedStrategies, openStrategies);
+      for (const signal of signals) {
+        signal.company = companyNames[ticker.toUpperCase()] || ticker;
+        
+        // Check duplicate
+        if (supabaseAdmin) {
+          const { data: existing } = await supabaseAdmin
+            .from('trade_signals')
+            .select('id')
+            .eq('ticker', ticker.toUpperCase())
+            .eq('date', signal.date)
+            .eq('strategy_key', signal.strategy_key)
+            .eq('signal_type', signal.signal_type)
+            .maybeSingle();
+
+          if (!existing) {
+            await saveTradeSignals([signal]);
+            const strategyLabel = STRATEGY_LIST.find(s => s.key === signal.strategy_key)?.label || signal.strategy_key;
+            const emoji = signal.signal_type === 'BUY' ? '🚨 *BUY SIGNAL*' : '⚠️ *SELL SIGNAL*';
+            const msg = `${emoji}\nTicker: *${signal.ticker}* (${signal.company})\nStrategy: *${strategyLabel}*\nPrice: *₹${signal.price}*\nDate: *${signal.date}*\nReason: _${signal.reasons.description}_`;
+            await sendAlert(msg);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('runSignalGenerationCheck error:', err.message);
+    await sendAlert(`❌ *Signal Generation Failed*\nError: ${err.message}`);
+  }
+}
+
 app.post('/api/cron/ingest-daily-prices', async (req, res) => {
   const secret = req.headers['x-cron-secret'];
   if (!secret || secret !== process.env.CRON_SECRET) {
@@ -933,6 +1017,7 @@ app.post('/api/cron/ingest-daily-prices', async (req, res) => {
   
   runDailyPricesIngestion(tickers, { getLastPriceDate, upsertDailyPrices, getDailyPricesHistory, saveCompanyTechnicals })
     .then(async (result) => {
+      await runSignalGenerationCheck(tickers);
       await sendAlert(`✅ *Daily Prices Ingestion Heartbeat*\nTickers processed: ${result.done}\nFailed: ${result.failed}\nSkipped: ${result.skipped}`);
     })
     .catch(async (e) => {

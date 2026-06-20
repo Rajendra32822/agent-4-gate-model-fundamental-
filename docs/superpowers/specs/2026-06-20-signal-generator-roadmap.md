@@ -74,14 +74,14 @@ CREATE INDEX IF NOT EXISTS idx_trade_signals_status ON trade_signals (status);
   - [x] **[MODIFY] `ingestion/dailyPricesRunner.js`:** Enhance price ingestion to automatically calculate daily technicals for each active ticker and upsert them to `company_technicals`.
   - [x] **[MODIFY] `index.js`:** Add database helper endpoints to query technical records.
 
-### Sprint 2: Combined Signal Engine & Telegram Alerting (1 Week)
+### Sprint 2: Combined Signal Engine & Telegram Alerting (1 Week) - ✅ COMPLETED
 * **Goal:** Build the signal generation logic that joins fundamentals with technical triggers, dispatching alerts.
 * **Tasks:**
-  - **[NEW] `platform/signalEngine.js`:** Pure helper containing buy/sell trigger logic:
-    - **BUY Signal:** Ticker is in the top-15 ranked list of an active fundamental strategy AND Price > SMA 200 (bullish filter) AND (RSI <= 35 (oversold dip) OR MACD Bullish Crossover).
-    - **SELL Signal:** Ticker is currently held in an open position/watchlist AND (Price < SMA 50 OR RSI >= 70 (overbought) OR MACD Bearish Crossover).
-  - **[NEW] `test/signalEngine.test.js`:** Assert buy/sell triggers execute correctly given mock fundamentals and technical metrics.
-  - **[MODIFY] `index.js`:** Wire a nightly cron check that runs the signal engine after ingestion, creates `trade_signals` records, and pushes structured Telegram alerts (e.g. *"🚨 BUY SIGNAL: TCS. Rank 2 in Marshall Undervalued. RSI at 32.2. Price > 200 SMA. CMP ₹3,150. Consider buying."*).
+  - [x] **[NEW] `platform/signalEngine.js`:** Pure helper containing buy/sell trigger logic:
+    - BUY Signal: Ticker is in the top-15 ranked list of an active fundamental strategy AND Price > SMA 200 (bullish filter) AND (RSI <= 35 (oversold dip) OR MACD Bullish Crossover).
+    - SELL Signal: Ticker is currently held in an open position/watchlist AND (Price < SMA 50 OR RSI >= 70 (overbought) OR MACD Bearish Crossover).
+  - [x] **[NEW] `test/signalEngine.test.js`:** Assert buy/sell triggers execute correctly given mock fundamentals and technical metrics.
+  - [x] **[MODIFY] `index.js`:** Wire a nightly cron check that runs the signal engine after ingestion, creates `trade_signals` records, and pushes structured Telegram alerts (e.g. *"🚨 BUY SIGNAL: TCS. Rank 2 in Marshall Undervalued. RSI at 32.2. Price > 200 SMA. CMP ₹3,150. Consider buying."*).
 
 ### Sprint 3: Signal Center UI Dashboard & Basket Export (1 Week)
 * **Goal:** Design the frontend workspace to manage signals, mark execution, and export order baskets.

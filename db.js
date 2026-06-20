@@ -1510,6 +1510,82 @@ async function getDailyPricesHistory(ticker, limit = 250) {
   }
 }
 
+async function getCompanyTechnicals(ticker, limit = 2) {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db
+      .from('company_technicals')
+      .select('*')
+      .eq('ticker', ticker.toUpperCase())
+      .order('date', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('getCompanyTechnicals error:', err.message);
+    return [];
+  }
+}
+
+async function saveTradeSignals(rows) {
+  try {
+    const db = getAdminClient();
+    if (!db || !rows?.length) return false;
+    const { error } = await db.from('trade_signals').upsert(
+      rows.map(r => ({
+        ticker:       r.ticker.toUpperCase(),
+        company:      r.company,
+        signal_type:  r.signal_type,
+        strategy_key: r.strategy_key,
+        price:        r.price,
+        date:         r.date,
+        reasons:      r.reasons,
+        status:       r.status || 'PENDING'
+      })),
+      { onConflict: 'ticker,date,strategy_key,signal_type' }
+    );
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('saveTradeSignals error:', err.message);
+    return false;
+  }
+}
+
+async function getPendingSignals() {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db
+      .from('trade_signals')
+      .select('*')
+      .eq('status', 'PENDING')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('getPendingSignals error:', err.message);
+    return [];
+  }
+}
+
+async function updateSignalStatus(id, status) {
+  try {
+    const db = getAdminClient();
+    if (!db) return false;
+    const { error } = await db
+      .from('trade_signals')
+      .update({ status })
+      .eq('id', id);
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('updateSignalStatus error:', err.message);
+    return false;
+  }
+}
+
 module.exports = {
   connectDB, checkConnection, saveAnalysis, getAnalysis, getAllAnalyses, getAnalysisHistory, deleteAnalysis,
   getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist, getCurrentQuarter,
@@ -1547,4 +1623,6 @@ module.exports = {
   getPaperBookMeta, savePaperBookMeta, getPaperTrades, savePaperTrades, savePaperBookDaily, getPaperBookDaily,
   // Technicals (Sprint 1)
   saveCompanyTechnicals, getLatestTechnicals, getDailyPricesHistory,
+  // Technicals & Signals (Sprint 2)
+  getCompanyTechnicals, saveTradeSignals, getPendingSignals, updateSignalStatus,
 };
