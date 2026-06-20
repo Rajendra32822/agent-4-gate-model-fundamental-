@@ -19,7 +19,7 @@ const { runCorporateActionsProposal, getCorporateActionsProposalState } = requir
 const fsPromises = require('fs').promises;
 const pathMod = require('path');
 const {
-  connectDB, saveAnalysis, getAnalysis,
+  connectDB, checkConnection, saveAnalysis, getAnalysis,
   getAllAnalyses, getAnalysisHistory, deleteAnalysis,
   getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist,
   upsertWatch, getActiveWatches, getAllWatches, updateWatchStatus,
@@ -41,9 +41,13 @@ const {
   createCorporateAction, getCorporateAction, listCorporateActions, listCorporateActionsByStatus,
   updateCorporateAction, setCorporateActionStatus, applyTickerChange, updateCompanyName,
   captureCorporateActionFromAnalysis, corporateActionExists,
-  getLastPriceDate, upsertDailyPrices, getActiveTickersInUniverse,
+  getLastPriceDate, getPriceOnDate, upsertDailyPrices, getActiveTickersInUniverse,
+  getPaperBookMeta, savePaperBookMeta, getPaperTrades, savePaperTrades, savePaperBookDaily, getPaperBookDaily,
+  listSectors,
 } = require('./db');
 const { rankUniverse, STRATEGY_LIST, toSectorMap } = require('./ranking');
+const { sendAlert } = require('./platform/alerting');
+const { decideExits, decideEntries, applyTick, computeBookMetrics } = require('./platform/paperTrade');
 const { validateConfirm, EVENT_TYPES } = require('./corporateActions');
 
 // Shared db-helpers bundle passed to the ingestion orchestrator/bulk runner
@@ -56,7 +60,7 @@ const INGEST_DB_HELPERS = {
 const app = express();
 const cache = new NodeCache({ stdTTL: 3600 });
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'rajendra.amil@gmail.com';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'rajendraamilineni@gmail.com';
 
 // ─── Supabase admin client ────────────────────────────────────────────────────
 const supabaseAdmin = createClient(
@@ -101,7 +105,15 @@ const analysisLimiter = rateLimit({
 connectDB().then(() => console.log('📦 Database ready'));
 
 // ─── Health check ─────────────────────────────────────────────────────────────
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  const dbAlive = await checkConnection();
+  if (!dbAlive) {
+    await sendAlert('🚨 *Uptime Alert*\nDatabase connection is DOWN or unreachable!');
+    return res.status(500).json({
+      status: 'error',
+      message: 'Database connection failed',
+    });
+  }
   res.json({
     status: 'ok',
     message: 'Fundamental Agent API running',
@@ -606,9 +618,11 @@ app.post('/api/cron/price-check', async (req, res) => {
     };
     const results = await runDailyPriceCheck(dbFns);
     console.log(`[cron] Price check done: ${results.checked} tickers, ${results.alerts.length} alerts`);
+    await sendAlert(`✅ *Daily Price Check Heartbeat*\nChecked: ${results.checked} tickers\nAlerts triggered: ${results.alerts.length}`);
     res.json({ success: true, ...results });
   } catch (err) {
     console.error('[cron] Price check failed:', err.message);
+    await sendAlert(`❌ *Daily Price Check Failed*\nError: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
@@ -880,7 +894,27 @@ app.post('/api/cron/ingest-universe', async (req, res) => {
   }
   const batch = Number(process.env.INGEST_BATCH_SIZE) || 50;
   const tickers = await getStaleCompanies(batch);
-  runBulkIngestion(tickers, INGEST_DB_HELPERS).catch(e => console.error('cron bulk error:', e.message));
+  
+  runBulkIngestion(tickers, INGEST_DB_HELPERS)
+    .then(async (state) => {
+      const coverage = await getCoverage();
+      const total = coverage.length;
+      const ok = coverage.filter(c => c.ingest_status === 'ok').length;
+      const failed = coverage.filter(c => c.ingest_status === 'failed').length;
+      const okPct = total > 0 ? (ok / total) * 100 : 100;
+      
+      let msg = `✅ *Universe Ingestion Heartbeat*\nTickers processed in this batch: ${state.done}\nFailed in this batch: ${state.failed}\nOverall coverage: ${ok}/${total} (${okPct.toFixed(1)}% OK)`;
+      
+      if (okPct < 85) {
+        msg = `⚠️ *Scrape Coverage Alert*\nOverall coverage has dropped to *${okPct.toFixed(1)}%* (${ok} OK, ${failed} failed out of ${total} total active companies).\n` + msg;
+      }
+      await sendAlert(msg);
+    })
+    .catch(async (e) => {
+      console.error('cron bulk error:', e.message);
+      await sendAlert(`❌ *Universe Ingestion Failed*\nError: ${e.message}`);
+    });
+
   res.json({ started: true, batch: tickers.length });
 });
 
@@ -893,10 +927,144 @@ app.post('/api/cron/ingest-daily-prices', async (req, res) => {
     return res.status(409).json({ error: 'Already running' });
   }
   const tickers = await getActiveTickersInUniverse();
+  if (!tickers.includes('^NSEI')) {
+    tickers.push('^NSEI');
+  }
+  
   runDailyPricesIngestion(tickers, { getLastPriceDate, upsertDailyPrices })
-    .catch(e => console.error('[cron] daily prices error:', e.message));
+    .then(async (result) => {
+      await sendAlert(`✅ *Daily Prices Ingestion Heartbeat*\nTickers processed: ${result.done}\nFailed: ${result.failed}\nSkipped: ${result.skipped}`);
+    })
+    .catch(async (e) => {
+      console.error('[cron] daily prices error:', e.message);
+      await sendAlert(`❌ *Daily Prices Ingestion Failed*\nError: ${e.message}`);
+    });
+
   res.status(202).json({ started: true, tickers: tickers.length });
 });
+
+app.post('/api/cron/paper-trade-tick', async (req, res) => {
+  const secret = req.headers['x-cron-secret'];
+  if (!secret || secret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const tickDate = req.body?.date || new Date().toISOString().split('T')[0];
+  const summaryAlerts = [];
+
+  try {
+    // 1. Fetch ranking dataset and construct maps
+    const rankingDataset = await getRankingDataset();
+    const freshRowsByTicker = {};
+    const pricesByTicker = {};
+    for (const r of rankingDataset) {
+      freshRowsByTicker[r.ticker] = r;
+      pricesByTicker[r.ticker] = r.current_price;
+    }
+
+    // 2. Fetch Nifty 50 close price for tickDate
+    const nifty50Price = await getPriceOnDate('^NSEI', tickDate);
+    pricesByTicker['^NSEI'] = nifty50Price;
+
+    // 3. Fetch sector benchmarks
+    const sectorRows = await listSectors();
+    const sectorBenchmarks = toSectorMap(sectorRows);
+
+    // 4. Run tick for each strategy key
+    const strategies = ['marshall_undervalued', 'quality_compounders', 'deep_value', 'high_growth'];
+    for (const strategyKey of strategies) {
+      // Load meta or auto-initialize
+      let meta = await getPaperBookMeta(strategyKey);
+      if (!meta) {
+        meta = { strategy_key: strategyKey, inception_date: tickDate, initial_capital: 1500000 };
+        await savePaperBookMeta(meta);
+      }
+
+      const initialCapital = Number(meta.initial_capital);
+
+      // Load transactions
+      const openTrades = await getPaperTrades(strategyKey, 'OPEN');
+      const closedTrades = await getPaperTrades(strategyKey, 'CLOSED');
+
+      // Decide exits
+      const exits = decideExits(openTrades, freshRowsByTicker, sectorBenchmarks, pricesByTicker, tickDate);
+
+      // Remaining open positions
+      const remainingOpenTrades = openTrades.filter(t => !exits.some(e => e.id === t.id));
+
+      // Calculate cash balance (including today's newly closed trades)
+      const allClosedTrades = closedTrades.concat(exits);
+      const openCost = remainingOpenTrades.length * 100000;
+      const realizedPnL = allClosedTrades.reduce((sum, t) => sum + (t.exit_price * t.shares - 100000), 0);
+      const cash = initialCapital - openCost + realizedPnL;
+
+      // Free slots
+      const freeSlots = Math.min(15 - remainingOpenTrades.length, Math.floor(cash / 100000));
+
+      // Fetch top ranked rows
+      const rankedRows = rankUniverse(strategyKey, rankingDataset, sectorBenchmarks, 15);
+
+      // Decide entries
+      const entries = decideEntries(strategyKey, rankedRows, remainingOpenTrades.map(t => t.ticker), freeSlots, pricesByTicker, tickDate);
+
+      // Apply tick to get current book value & updated open trades (re-allocating cash for entries)
+      const finalOpenTrades = remainingOpenTrades.concat(entries);
+      const cashForTick = cash - (entries.length * 100000);
+      const { updatedTrades, bookValue } = applyTick(finalOpenTrades, cashForTick, pricesByTicker, tickDate);
+
+      // Benchmark Return
+      const inceptionNifty = await getPriceOnDate('^NSEI', meta.inception_date);
+      const benchmarkReturnPct = (inceptionNifty > 0 && nifty50Price > 0) ? (nifty50Price / inceptionNifty) - 1 : 0;
+      const bookReturnPct = (bookValue / initialCapital) - 1;
+
+      // Prepare daily log snapshot
+      const snapshot = {
+        strategy_key: strategyKey,
+        date: tickDate,
+        book_value: bookValue,
+        book_return_pct: Number(bookReturnPct.toFixed(4)),
+        nifty50_return_pct: Number(benchmarkReturnPct.toFixed(4)),
+        open_positions: updatedTrades.length
+      };
+
+      // Save transactions & snapshot to database
+      if (exits.length > 0) {
+        await savePaperTrades(exits);
+      }
+      if (updatedTrades.length > 0) {
+        await savePaperTrades(updatedTrades);
+      }
+      await savePaperBookDaily(snapshot);
+
+      // Format summary alert details
+      const changePct = bookReturnPct * 100;
+      const benchChangePct = benchmarkReturnPct * 100;
+      const label = STRATEGY_LIST.find(s => s.key === strategyKey)?.label || strategyKey;
+
+      const boughtList = entries.map(e => e.ticker).join(', ') || 'None';
+      const soldList = exits.map(e => `${e.ticker} (${e.exit_reason})`).join(', ') || 'None';
+
+      summaryAlerts.push(
+        `📈 *${label}*\n` +
+        `• Value: ₹${(bookValue / 100000).toFixed(2)}L (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}% vs Nifty ${benchChangePct >= 0 ? '+' : ''}${benchChangePct.toFixed(2)}%)\n` +
+        `• Active positions: ${updatedTrades.length}/15 (Cash: ₹${(cashForTick / 100000).toFixed(2)}L)\n` +
+        `• Bought: ${boughtList}\n` +
+        `• Sold: ${soldList}`
+      );
+    }
+
+    // Send Telegram alert
+    const alertMsg = `🏁 *Daily Paper-Trade Simulation Tick (${tickDate})*\n\n` + summaryAlerts.join('\n\n');
+    await sendAlert(alertMsg);
+
+    res.json({ success: true, date: tickDate, message: 'Paper trading tick executed' });
+  } catch (err) {
+    console.error('[cron] paper-trade-tick error:', err.message);
+    await sendAlert(`❌ *Paper-Trade Tick Failed*\nDate: ${tickDate}\nError: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 app.post('/api/cron/propose-corporate-actions', async (req, res) => {
   const secret = req.headers['x-cron-secret'];
@@ -907,8 +1075,16 @@ app.post('/api/cron/propose-corporate-actions', async (req, res) => {
     return res.status(409).json({ error: 'Already running' });
   }
   const tickers = await getActiveTickersInUniverse();
+  
   runCorporateActionsProposal(tickers, { corporateActionExists, createCorporateAction })
-    .catch(e => console.error('[cron] corporate actions proposal error:', e.message));
+    .then(async (result) => {
+      await sendAlert(`✅ *Corporate Actions Proposal Heartbeat*\nTickers processed: ${result.done}\nFailed: ${result.failed}\nSkipped: ${result.skipped}`);
+    })
+    .catch(async (e) => {
+      console.error('[cron] corporate actions proposal error:', e.message);
+      await sendAlert(`❌ *Corporate Actions Proposal Failed*\nError: ${e.message}`);
+    });
+
   res.status(202).json({ started: true, tickers: tickers.length });
 });
 
@@ -1014,6 +1190,51 @@ app.post('/api/admin/backfill-metrics', requireAdmin, async (req, res) => {
       }
     }
     res.json({ success: true, ...results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/paper-trading/stats', requireAuth, async (req, res) => {
+  try {
+    const strategies = ['marshall_undervalued', 'quality_compounders', 'deep_value', 'high_growth'];
+    const results = {};
+
+    for (const strategyKey of strategies) {
+      const meta = await getPaperBookMeta(strategyKey);
+      if (!meta) {
+        results[strategyKey] = { initialized: false };
+        continue;
+      }
+
+      const openTrades = await getPaperTrades(strategyKey, 'OPEN');
+      const closedTrades = await getPaperTrades(strategyKey, 'CLOSED');
+      const equityCurve = await getPaperBookDaily(strategyKey);
+
+      // Get benchmark info
+      let benchmarkInfo = null;
+      if (equityCurve.length > 0) {
+        const inceptionNifty = await getPriceOnDate('^NSEI', meta.inception_date);
+        const latestNifty = await getPriceOnDate('^NSEI', equityCurve[equityCurve.length - 1].date);
+        benchmarkInfo = {
+          inception_benchmark_price: inceptionNifty,
+          latest_benchmark_price: latestNifty
+        };
+      }
+
+      const metrics = computeBookMetrics(closedTrades, equityCurve, benchmarkInfo);
+
+      results[strategyKey] = {
+        initialized: true,
+        meta,
+        openPositions: openTrades,
+        closedTrades,
+        equityCurve,
+        metrics
+      };
+    }
+
+    res.json(results);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

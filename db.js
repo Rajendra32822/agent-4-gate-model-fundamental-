@@ -26,6 +26,19 @@ function getAdminClient() {
 
 async function connectDB() { return getClient(); }
 
+async function checkConnection() {
+  try {
+    const db = getAdminClient();
+    if (!db) return false;
+    const { data, error } = await db.from('companies').select('ticker').limit(1);
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('Database connection check failed:', err.message);
+    return false;
+  }
+}
+
 async function saveAnalysis(analysis) {
   try {
     const db = getAdminClient();
@@ -1224,6 +1237,36 @@ async function getLastPriceDate(ticker) {
   }
 }
 
+async function getPriceOnDate(ticker, date) {
+  try {
+    const db = getAdminClient();
+    if (!db) return null;
+    const { data, error } = await db
+      .from('daily_prices')
+      .select('close')
+      .eq('ticker', ticker.toUpperCase())
+      .eq('date', date)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return Number(data.close);
+
+    // Fallback to closest price on or before date
+    const { data: closest, error: err2 } = await db
+      .from('daily_prices')
+      .select('close')
+      .eq('ticker', ticker.toUpperCase())
+      .lte('date', date)
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (err2) throw err2;
+    return closest?.close ? Number(closest.close) : null;
+  } catch (err) {
+    console.error('getPriceOnDate error:', err.message);
+    return null;
+  }
+}
+
 async function upsertDailyPrices(rows) {
   try {
     const db = getAdminClient();
@@ -1267,8 +1310,139 @@ async function getActiveTickersInUniverse() {
   }
 }
 
+// ─── Paper Trading ────────────────────────────────────────────────────────────
+
+async function getPaperBookMeta(strategyKey) {
+  try {
+    const db = getAdminClient();
+    if (!db) return null;
+    const { data, error } = await db
+      .from('paper_book_meta')
+      .select('*')
+      .eq('strategy_key', strategyKey)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('getPaperBookMeta error:', err.message);
+    return null;
+  }
+}
+
+async function savePaperBookMeta(meta) {
+  try {
+    const db = getAdminClient();
+    if (!db) return false;
+    const { error } = await db
+      .from('paper_book_meta')
+      .upsert({
+        strategy_key: meta.strategy_key,
+        inception_date: meta.inception_date,
+        initial_capital: meta.initial_capital ?? 1500000
+      }, { onConflict: 'strategy_key' });
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('savePaperBookMeta error:', err.message);
+    return false;
+  }
+}
+
+async function getPaperTrades(strategyKey, status) {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    let query = db
+      .from('paper_trades')
+      .select('*')
+      .eq('strategy_key', strategyKey);
+    
+    if (status) {
+      query = query.eq('status', status);
+    }
+    
+    const { data, error } = await query.order('entry_date', { ascending: false }).order('id', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('getPaperTrades error:', err.message);
+    return [];
+  }
+}
+
+async function savePaperTrades(trades) {
+  try {
+    const db = getAdminClient();
+    if (!db || !trades?.length) return false;
+    const rows = trades.map(t => ({
+      id: t.id, // will be undefined for inserts, populated for updates
+      strategy_key: t.strategy_key,
+      ticker: t.ticker.toUpperCase(),
+      company: t.company,
+      entry_date: t.entry_date,
+      entry_price: t.entry_price,
+      entry_rank: t.entry_rank,
+      entry_reasons: t.entry_reasons,
+      exit_date: t.exit_date,
+      exit_price: t.exit_price,
+      exit_reason: t.exit_reason,
+      status: t.status,
+      shares: t.shares,
+      current_price: t.current_price,
+      return_pct: t.return_pct,
+      last_updated: new Date().toISOString()
+    }));
+
+    const { error } = await db.from('paper_trades').upsert(rows, { onConflict: 'id' });
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('savePaperTrades error:', err.message);
+    return false;
+  }
+}
+
+async function savePaperBookDaily(snapshot) {
+  try {
+    const db = getAdminClient();
+    if (!db) return false;
+    const { error } = await db
+      .from('paper_book_daily')
+      .upsert({
+        strategy_key: snapshot.strategy_key,
+        date: snapshot.date,
+        book_value: snapshot.book_value,
+        book_return_pct: snapshot.book_return_pct,
+        nifty50_return_pct: snapshot.nifty50_return_pct,
+        open_positions: snapshot.open_positions
+      }, { onConflict: 'strategy_key,date' });
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error('savePaperBookDaily error:', err.message);
+    return false;
+  }
+}
+
+async function getPaperBookDaily(strategyKey) {
+  try {
+    const db = getAdminClient();
+    if (!db) return [];
+    const { data, error } = await db
+      .from('paper_book_daily')
+      .select('*')
+      .eq('strategy_key', strategyKey)
+      .order('date', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('getPaperBookDaily error:', err.message);
+    return [];
+  }
+}
+
 module.exports = {
-  connectDB, saveAnalysis, getAnalysis, getAllAnalyses, getAnalysisHistory, deleteAnalysis,
+  connectDB, checkConnection, saveAnalysis, getAnalysis, getAllAnalyses, getAnalysisHistory, deleteAnalysis,
   getProfile, updateProfile, getWatchlist, addToWatchlist, removeFromWatchlist, getCurrentQuarter,
   // tracking
   upsertWatch, getActiveWatches, getAllWatches, updateWatchStatus,
@@ -1299,5 +1473,7 @@ module.exports = {
   applyTickerChange, writeTickerHistory, updateCompanyName, resolveTicker, captureCorporateActionFromAnalysis,
   corporateActionExists,
   // Daily prices
-  getLastPriceDate, upsertDailyPrices, getActiveTickersInUniverse,
+  getLastPriceDate, getPriceOnDate, upsertDailyPrices, getActiveTickersInUniverse,
+  // Paper Trading (Phase 2)
+  getPaperBookMeta, savePaperBookMeta, getPaperTrades, savePaperTrades, savePaperBookDaily, getPaperBookDaily,
 };

@@ -5,6 +5,7 @@ const { computeConfidenceScore } = require('./confidence');
 const { verifyAnalysis } = require('./verification');
 const { getCompanyBundle } = require('./db');
 const ontology = require('./ontology');
+const { sendAlert } = require('./platform/alerting');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -773,6 +774,7 @@ Example:
 
   } catch (error) {
     console.error('Analysis error:', error);
+    await sendAlert(`❌ *AI Analysis Failed for ${ticker} (${companyName})*\nError: ${error.message}`);
     return { success: false, error: sanitizeErrorForClient(error), details: undefined };
   }
 }

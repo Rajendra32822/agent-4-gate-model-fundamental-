@@ -3,6 +3,7 @@ const https = require('https');
 // ─── Yahoo Finance helpers ────────────────────────────────────────────────────
 
 function toYahooSymbol(ticker, exchange = 'NS') {
+  if (ticker.startsWith('^')) return ticker.toUpperCase();
   return `${ticker.toUpperCase()}.${exchange}`;
 }
 
